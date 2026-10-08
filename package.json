@@ -1,6 +1,6 @@
 {
   "name": "scorly",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "private": true,
   "description": "Scorly - SEO Score & OG Preview browser extension",
   "scripts": {

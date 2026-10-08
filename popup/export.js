@@ -75,6 +75,8 @@ function toCsv(data, scoreResult) {
   rows.push(['Has Open Graph', Object.keys(data.og.raw || {}).length > 0]);
   rows.push(['Has Twitter Card', Object.keys(data.twitter.raw || {}).length > 0]);
   rows.push(['Structured Data Types', data.jsonLdTypes.join('; ')]);
+  rows.push(['LCP (ms)', data.perf.lcp]);
+  rows.push(['CLS', data.perf.cls]);
   rows.push(['TTFB (ms)', data.perf.ttfb]);
   rows.push(['Requests', data.perf.requestCount]);
   rows.push(['Transferred Size (bytes)', data.perf.transferSize]);

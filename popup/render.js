@@ -317,6 +317,8 @@ function renderPerfTab(data, scoreResult) {
   const score = scoreResult.categoryScores.perf;
   let html = `<div class="tile-grid">
     <div class="tile"><div class="tile-num">${score}/100</div><div class="tile-label">Score</div></div>
+    <div class="tile"><div class="tile-num">${p.lcp != null ? (p.lcp / 1000).toFixed(1) + 's' : '—'}</div><div class="tile-label">LCP</div></div>
+    <div class="tile"><div class="tile-num">${p.cls != null ? p.cls : '—'}</div><div class="tile-label">CLS</div></div>
     <div class="tile"><div class="tile-num">${p.ttfb != null ? p.ttfb + 'ms' : '—'}</div><div class="tile-label">TTFB</div></div>
     <div class="tile"><div class="tile-num">${p.requestCount}</div><div class="tile-label">Requests</div></div>
     <div class="tile"><div class="tile-num">${formatBytes(p.transferSize)}</div><div class="tile-label">Size</div></div>

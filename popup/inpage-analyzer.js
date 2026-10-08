@@ -1,6 +1,33 @@
 // Executed inside the inspected page via chrome.scripting.executeScript.
 // Must be fully self-contained (no references to outer scope).
-function scorlyInPageAnalyze() {
+async function scorlyInPageAnalyze() {
+  // largest-contentful-paint / layout-shift entries are only backfilled to a
+  // PerformanceObserver that explicitly asks for `buffered: true` — plain
+  // getEntriesByType() returns nothing for them. Delivery of buffered entries
+  // is async, so wait one tick (or the real-time callback, whichever is first).
+  function collectBuffered(type, timeoutMs) {
+    return new Promise((resolve) => {
+      if (typeof PerformanceObserver === 'undefined' ||
+          !PerformanceObserver.supportedEntryTypes ||
+          !PerformanceObserver.supportedEntryTypes.includes(type)) {
+        resolve([]);
+        return;
+      }
+      let entries = [];
+      let observer;
+      try {
+        observer = new PerformanceObserver((list) => { entries = entries.concat(list.getEntries()); });
+        observer.observe({ type, buffered: true });
+      } catch (e) {
+        resolve([]);
+        return;
+      }
+      setTimeout(() => {
+        try { observer.disconnect(); } catch (e) { /* ignore */ }
+        resolve(entries);
+      }, timeoutMs);
+    });
+  }
   function abs(u) {
     if (!u) return null;
     try { return new URL(u, document.baseURI).href; } catch (e) { return u; }
@@ -202,6 +229,20 @@ function scorlyInPageAnalyze() {
     resources.forEach((r) => { transferSize += r.transferSize || 0; });
   } catch (e) { /* performance API unavailable */ }
 
+  // Real Web Vitals, read from the browser's own performance entry buffer
+  // (no network calls — just local Performance Observer APIs).
+  let lcp = null, cls = null;
+  try {
+    const [lcpEntries, shiftEntries] = await Promise.all([
+      collectBuffered('largest-contentful-paint', 150),
+      collectBuffered('layout-shift', 150),
+    ]);
+    if (lcpEntries.length) lcp = Math.round(lcpEntries[lcpEntries.length - 1].startTime);
+    if (shiftEntries.length || PerformanceObserver.supportedEntryTypes.includes('layout-shift')) {
+      cls = Math.round(shiftEntries.reduce((sum, e) => sum + (e.hadRecentInput ? 0 : e.value), 0) * 1000) / 1000;
+    }
+  } catch (e) { /* not supported */ }
+
   // ---------- Security ----------
   const isSecureContext = !!window.isSecureContext;
   let mixedContentCount = 0;
@@ -271,7 +312,7 @@ function scorlyInPageAnalyze() {
     jsonLdTypes,
     hreflangs,
     firstParagraph,
-    perf: { ttfb, transferSize, requestCount, nextHopProtocol },
+    perf: { ttfb, transferSize, requestCount, nextHopProtocol, lcp, cls },
     security: { isSecureContext, mixedContentCount, https: location.protocol === 'https:' },
     aiSeo: { hasFaqSchema, hasArticleSchema, semanticLandmarks, hasStructuredData: jsonLd.length > 0, hasMetaDescription: !!descText, hasClearH1: h1Texts.length === 1 },
     eeat: { hasAuthorByline, hasPublishDate, hasAboutLink, hasContactLink, hasPrivacyLink, hasOrgOrPersonSchema },

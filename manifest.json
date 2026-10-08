@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Scorly - SEO Score & OG Preview",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Free, open source, no account, no subscription. Get instant SEO analysis, on-page insights, and social share previews for any site, including localhost.",
   "icons": {
     "16": "icons/icon16.png",

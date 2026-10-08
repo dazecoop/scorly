@@ -1,13 +1,19 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
   <defs>
-    <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0%" stop-color="#6366f1"/>
-      <stop offset="100%" stop-color="#4338ca"/>
+    <linearGradient id="g" x1="0" y1="1" x2="1" y2="0">
+      <stop offset="0%" stop-color="#10b981"/>
+      <stop offset="100%" stop-color="#0ea5e9"/>
     </linearGradient>
   </defs>
-  <rect width="128" height="128" rx="26" fill="url(#g)"/>
-  <circle cx="64" cy="64" r="40" fill="none" stroke="white" stroke-width="9" stroke-linecap="round"
-    stroke-dasharray="188 251" transform="rotate(-90 64 64)"/>
-  <text x="64" y="76" font-family="Arial, sans-serif" font-size="46" font-weight="800"
-    fill="white" text-anchor="middle">S</text>
+  <rect width="128" height="128" rx="25" fill="url(#g)"/>
+  <text x="59" y="90" font-family="SignPainter, 'Snell Roundhand', 'Brush Script MT', cursive"
+    font-size="98" fill="white" text-anchor="middle">S</text>
 </svg>
+<!--
+  Note: browsers fall back to a generic cursive/serif font if none of the
+  listed script faces are installed, so this preview won't always match the
+  shipped PNGs exactly. The PNGs (icon16/32/48/128.png) are the source of
+  truth — regenerate both with scripts/generate-icon.sh, which rasterizes
+  the "S" with macOS's SignPainter font directly for a consistent result.
+-->
+

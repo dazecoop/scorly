@@ -1,1 +1,10 @@
 .DS_Store
+node_modules
+dist
+
+# Screenshot capture/generation tooling (local use only, not shipped)
+scripts/capture-popup.js
+scripts/compose-slides.js
+scripts/demo-page.html
+scripts/lib/
+scripts/output/

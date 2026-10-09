@@ -58,7 +58,7 @@ async function main() {
     await sitePage.goto(`${base}/v1`, { waitUntil: 'networkidle0', timeout: 20000 });
 
     const popup = await browser.newPage();
-    await popup.setViewport({ width: 460, height: 620 });
+    await popup.setViewport({ width: 500, height: 620 });
     await sitePage.bringToFront();
     await popup.goto(`chrome-extension://${extId}/popup/popup.html`, { waitUntil: 'load' });
     await sitePage.bringToFront();
@@ -72,6 +72,18 @@ async function main() {
     }));
     check('popup analyzed the page without error', popupState.visible, popupState.error);
     check('popup shows the compare bar', popupState.hasSaveBtn);
+
+    const popupMd = await popup.evaluate(() => ({
+      hasButton: !!document.getElementById('exportMd'),
+      buttons: Array.from(document.querySelectorAll('.export-btn')).map((b) => b.textContent.trim()),
+      md: toMarkdown(lastData, lastScoreResult),
+    }));
+    check('popup offers four export formats',
+      JSON.stringify(popupMd.buttons) === '["PDF","CSV","JSON","Markdown"]', JSON.stringify(popupMd.buttons));
+    check('popup markdown export includes the score table',
+      popupMd.md.includes('# Scorly report') && popupMd.md.includes('| Category | Score |'));
+    check('popup markdown export lists checks',
+      /- \[[ x]\] \*\*/.test(popupMd.md), popupMd.md.split('\n').slice(-4).join(' | '));
 
     await popup.evaluate(() => document.getElementById('saveSnapBtn').click());
     await new Promise((r) => setTimeout(r, 1200));
@@ -221,13 +233,67 @@ async function main() {
       input.dispatchEvent(new Event('input'));
     });
 
-    const md = await cmp.evaluate(() => diffToMarkdown());
+    // ---- Export menu ----
+    console.log('\n[5] export menu');
+    const menuClosed = await cmp.evaluate(() =>
+      document.getElementById('exportPop').classList.contains('hidden'));
+    check('export menu starts closed', menuClosed);
+
+    const menuItems = await cmp.evaluate(() => {
+      document.getElementById('exportBtn').click();
+      return {
+        open: !document.getElementById('exportPop').classList.contains('hidden'),
+        items: Array.from(document.querySelectorAll('#exportPop button[data-export]'))
+          .map((b) => [b.dataset.export, b.textContent.trim()]),
+      };
+    });
+    check('export button opens the menu', menuItems.open);
+    check('menu offers PDF, CSV, JSON and Markdown',
+      JSON.stringify(menuItems.items.map((i) => i[0])) === '["pdf","csv","json","md"]',
+      JSON.stringify(menuItems.items));
+    check('menu items are labelled',
+      JSON.stringify(menuItems.items.map((i) => i[1])) === '["PDF","CSV","JSON","Markdown"]',
+      JSON.stringify(menuItems.items.map((i) => i[1])));
+
+    const closedByOutside = await cmp.evaluate(() => {
+      document.body.click();
+      return document.getElementById('exportPop').classList.contains('hidden');
+    });
+    check('clicking outside closes the menu', closedByOutside);
+
+    const exporters = await cmp.evaluate(() => ({
+      pdf: typeof exportDiffPdf, csv: typeof exportDiffCsv,
+      json: typeof exportDiffJson, md: typeof exportDiffMarkdown,
+      jspdf: typeof window.jspdf,
+    }));
+    check('all four exporters are loaded',
+      Object.values(exporters).every((t) => t === 'function' || t === 'object'), JSON.stringify(exporters));
+
+    const md = await cmp.evaluate(() => diffToMarkdown(state.diff));
     check('markdown export mentions the title change', /Title/.test(md) && md.includes('# Scorly comparison'));
     check('markdown export includes a diff block', md.includes('```diff'));
     fs.writeFileSync(path.join(OUT_DIR, 'compare-export.md'), md);
 
-    // ---- 5. Snapshot management.
-    console.log('\n[5] snapshot management');
+    const csv = await cmp.evaluate(() => diffToCsv(state.diff));
+    check('csv export has a header row', csv.startsWith('Section,Field,Status,A,B'));
+    check('csv export lists the changed title',
+      csv.split('\r\n').some((line) => line.startsWith('Meta,Title,changed,')), csv.split('\r\n')[6]);
+    fs.writeFileSync(path.join(OUT_DIR, 'compare-export.csv'), csv);
+
+    // jsPDF throws on a malformed document, so rendering one cleanly to a
+    // non-trivial byte count is a real check.
+    const pdf = await cmp.evaluate(() => {
+      const doc = diffPdfDoc(state.diff);
+      return {
+        bytes: doc.output('arraybuffer').byteLength,
+        pages: doc.internal.getNumberOfPages(),
+      };
+    });
+    check('pdf export builds a document', pdf.bytes > 5000, `${pdf.bytes} bytes`);
+    check('pdf export paginates long diffs', pdf.pages >= 2, `${pdf.pages} page(s)`);
+
+    // ---- 6. Snapshot management.
+    console.log('\n[6] snapshot management');
     await cmp.evaluate(() => document.getElementById('backBtn').click());
     await new Promise((r) => setTimeout(r, 600));
     const listed = await cmp.evaluate(() => document.querySelectorAll('#snapList li').length);

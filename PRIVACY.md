@@ -64,8 +64,8 @@ telemetry, crash reporting, or usage tracking of any kind.
 
 ## Exports
 
-The PDF, CSV, and JSON export buttons, and the compare view's Markdown and
-JSON exports, generate files locally in your browser
+The PDF, CSV, JSON and Markdown exports — both the popup's footer buttons
+and the compare view's Export menu — generate files locally in your browser
 (PDF via a bundled, offline copy of jsPDF) and save them to your device
 through the browser's normal download flow. Scorly never uploads them
 anywhere.

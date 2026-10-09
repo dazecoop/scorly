@@ -2,7 +2,9 @@
 
 html, body {
   margin: 0;
-  width: 460px;
+  /* Wide enough for four export buttons to sit on one row without the
+     "Markdown" label wrapping. */
+  width: 500px;
   background: var(--bg);
   color: var(--text);
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
@@ -141,7 +143,7 @@ html, body { height: 600px; }
 
 .export-bar {
   display: flex;
-  gap: 8px;
+  gap: 6px;
   padding: 10px 14px;
   border-top: 1px solid var(--border);
   background: var(--surface);

@@ -61,8 +61,7 @@ function initChrome() {
     state.snapB = null;
     await showSetup();
   });
-  el('exportMdBtn').addEventListener('click', exportMarkdown);
-  el('exportJsonBtn').addEventListener('click', exportJson);
+  initExportMenu();
 
   document.querySelectorAll('.slot-form').forEach((form) => {
     form.addEventListener('submit', async (e) => {
@@ -99,8 +98,8 @@ function showPane(which) {
   el('diffOnlyWrap').classList.toggle('hidden', !isDiff);
   el('filterInput').classList.toggle('hidden', !isDiff);
   el('swapBtn').classList.toggle('hidden', !isDiff);
-  el('exportMdBtn').classList.toggle('hidden', !isDiff);
-  el('exportJsonBtn').classList.toggle('hidden', !isDiff);
+  el('exportWrap').classList.toggle('hidden', !isDiff);
+  if (!isDiff) closeExportMenu();
 }
 
 function busy(text) {
@@ -712,124 +711,46 @@ function checkRow(row) {
 }
 
 // ---------------------------------------------------------------------------
-// Export
+// Export menu
 // ---------------------------------------------------------------------------
 
-function diffToMarkdown() {
-  const d = state.diff;
-  const lines = [];
-  lines.push('# Scorly comparison');
-  lines.push('');
-  lines.push(`- **A** — ${d.a.url} (captured ${d.a.capturedAt})`);
-  lines.push(`- **B** — ${d.b.url} (captured ${d.b.capturedAt})`);
-  lines.push('');
-  lines.push(`**Overall score:** A ${d.scores.overall.a} → B ${d.scores.overall.b} (${d.scores.overall.delta >= 0 ? '+' : ''}${d.scores.overall.delta})`);
-  lines.push('');
-  lines.push('| Category | A | B | Δ |');
-  lines.push('| --- | --- | --- | --- |');
-  d.scores.categories.forEach((c) => {
-    lines.push(`| ${c.label}${c.unreliable ? ' \\*' : ''} | ${c.a} | ${c.b} | ${c.delta >= 0 ? '+' : ''}${c.delta} |`);
-  });
-  lines.push('');
-  if (!d.scores.perfComparable) {
-    lines.push('\\* One side was captured in a background tab, which records no paint timings, ' +
-      'so the Performance score and the overall score are not like-for-like.');
-    lines.push('');
-  }
+const EXPORTERS = {
+  pdf: exportDiffPdf,
+  csv: exportDiffCsv,
+  json: exportDiffJson,
+  md: exportDiffMarkdown,
+};
 
-  d.sections.forEach((section) => {
-    const rows = section.rows.filter((r) => r.status !== 'same');
-    if (!rows.length) return;
-    lines.push(`## ${section.label} (${section.changed})`);
-    lines.push('');
-    rows.forEach((row) => {
-      if (row.kind === 'check') {
-        lines.push(`- **${row.label}** (${row.category}): ${row.a} → ${row.b}`);
-        return;
-      }
-      if (row.kind === 'num') {
-        lines.push(`- **${row.label}**: ${row.a ?? '—'}${row.unit} → ${row.b ?? '—'}${row.unit}`);
-        return;
-      }
-      if (row.kind === 'set') {
-        lines.push(`- **${row.label}** (${row.countA} → ${row.countB})`);
-        row.items.forEach((item) => {
-          const sigil = item.status === 'a-only' ? 'A only' : item.status === 'b-only' ? 'B only' : 'changed';
-          const val = item.status === 'changed' ? `${item.a} → ${item.b}` : (item.a || item.b || '');
-          lines.push(`  - [${sigil}] \`${item.key}\` ${val}`.trimEnd());
-        });
-        return;
-      }
-      if (row.kind === 'seq') {
-        lines.push(`- **${row.label}** (${row.changedCount} changed)`);
-        lines.push('');
-        lines.push('```diff');
-        row.ops.forEach((op) => {
-          if (op.type === 'eq') return;
-          const item = op.type === 'ins' ? op.b : op.a;
-          const text = item.text !== undefined
-            ? (item.level ? `H${item.level} ${item.text}` : `<${item.tag}> ${item.text}`)
-            : (item.line !== undefined ? item.line : String(item));
-          lines.push((op.type === 'ins' ? '+ ' : '- ') + text);
-        });
-        lines.push('```');
-        lines.push('');
-        return;
-      }
-      lines.push(`- **${row.label}**`);
-      lines.push(`  - A: ${row.a === null ? '_not present_' : row.a}`);
-      lines.push(`  - B: ${row.b === null ? '_not present_' : row.b}`);
-    });
-    lines.push('');
+function closeExportMenu() {
+  el('exportPop').classList.add('hidden');
+  el('exportBtn').setAttribute('aria-expanded', 'false');
+}
+
+function toggleExportMenu() {
+  const open = el('exportPop').classList.toggle('hidden') === false;
+  el('exportBtn').setAttribute('aria-expanded', String(open));
+  if (open) el('exportPop').querySelector('button').focus();
+}
+
+function initExportMenu() {
+  el('exportBtn').addEventListener('click', (e) => {
+    e.stopPropagation();
+    toggleExportMenu();
   });
 
-  return lines.join('\n');
-}
+  el('exportPop').addEventListener('click', (e) => {
+    const btn = e.target.closest('button[data-export]');
+    if (!btn || !state.diff) return;
+    closeExportMenu();
+    EXPORTERS[btn.dataset.export](state.diff);
+  });
 
-async function exportMarkdown() {
-  const md = diffToMarkdown();
-  try {
-    await navigator.clipboard.writeText(md);
-    flashButton(el('exportMdBtn'), 'Copied ✓');
-  } catch (e) {
-    downloadBlob(md, 'text/markdown', 'scorly-compare.md');
-  }
-}
-
-function exportJson() {
-  const d = state.diff;
-  const payload = {
-    generatedAt: new Date().toISOString(),
-    a: d.a,
-    b: d.b,
-    scores: d.scores,
-    sections: d.sections.map((s) => ({
-      id: s.id,
-      label: s.label,
-      changed: s.changed,
-      rows: s.rows.filter((r) => r.status !== 'same').map((r) => {
-        const out = { label: r.label, kind: r.kind, status: r.status };
-        if (r.kind === 'set') out.items = r.items;
-        else if (r.kind === 'seq') out.ops = r.ops.filter((o) => o.type !== 'eq');
-        else { out.a = r.a; out.b = r.b; if (r.delta !== undefined) out.delta = r.delta; }
-        return out;
-      }),
-    })),
-  };
-  downloadBlob(JSON.stringify(payload, null, 2), 'application/json', 'scorly-compare.json');
-}
-
-function downloadBlob(text, type, filename) {
-  const url = URL.createObjectURL(new Blob([text], { type }));
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = filename;
-  a.click();
-  setTimeout(() => URL.revokeObjectURL(url), 2000);
-}
-
-function flashButton(btn, text) {
-  const original = btn.textContent;
-  btn.textContent = text;
-  setTimeout(() => { btn.textContent = original; }, 1400);
+  document.addEventListener('click', (e) => {
+    if (!e.target.closest('#exportWrap')) closeExportMenu();
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape') return;
+    closeExportMenu();
+    el('exportBtn').focus();
+  });
 }

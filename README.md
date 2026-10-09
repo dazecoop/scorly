@@ -29,8 +29,9 @@ Links and image alt text are matched by path, so the same link on localhost
 and live is never reported as a change.
 
 Fill either side from a snapshot you saved earlier or let Scorly load a URL
-in a background tab. Filter to just the differences, then copy the whole
-thing out as Markdown for a pull request or a client email.
+in a background tab. Filter to just the differences, then export the whole
+comparison as PDF, CSV, JSON or Markdown — for a pull request, a client
+email, or a spreadsheet.
 
 Snapshots live in local extension storage, are capped at 8, and can be
 deleted at any time. Nothing is uploaded, and nothing is stored unless you
@@ -72,9 +73,9 @@ instead of penalizing a page that was never meant to have a certificate yet.
 side-by-side scores, every check whose verdict changed, and word-level diffs
 of all the page's text and tags.
 
-**Exports what it finds.** PDF, CSV, or JSON from the footer bar, all
-generated locally — PDF via a bundled copy of jsPDF, no network call
-involved.
+**Exports what it finds.** PDF, CSV, JSON or Markdown, from the popup's
+footer bar or the compare view's Export menu — all generated locally, PDF via
+a bundled copy of jsPDF, no network call involved.
 
 **Costs nothing to run.** No account, no API key, no rate limit, no
 subscription. Light/dark theme follows your OS by default, with a manual
@@ -145,13 +146,14 @@ popup/
   snapshots.js         Local snapshot store (chrome.storage.local) for the compare view
   scoring.js           Turns extracted data into 8 category scores + a severity-tagged checklist
   render.js            All DOM rendering for every tab
-  export.js            JSON / CSV / PDF generation
+  export.js            JSON / CSV / PDF / Markdown generation
   vendor/jspdf.umd.min.js   Bundled jsPDF (MIT) — used for local, offline PDF export
 compare/
   compare.html         Full-tab comparison view
   compare.css          Comparison styling
   diff.js              Pure diff engine: two snapshots in, a renderable comparison model out
   compare.js           Compare-view controller and renderers
+  export-diff.js       PDF / CSV / JSON / Markdown export of a comparison
 icons/
 ```
 

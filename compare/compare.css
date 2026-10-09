@@ -61,6 +61,52 @@ body {
 .icon-btn svg { width: 16px; height: 16px; }
 .icon-btn:hover { border-color: var(--accent); }
 
+/* ---------------- Export menu ---------------- */
+
+.export-wrap { position: relative; }
+
+#exportBtn { display: inline-flex; align-items: center; gap: 7px; }
+#exportBtn svg { width: 15px; height: 15px; }
+#exportBtn .caret { width: 12px; height: 12px; margin-left: -2px; opacity: 0.7; }
+#exportBtn[aria-expanded="true"] { border-color: var(--accent); color: var(--accent); }
+
+.export-pop {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 40;
+  min-width: 168px;
+  padding: 5px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 14px 34px rgba(0, 0, 0, 0.18);
+}
+.export-pop button {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 10px;
+  font: inherit;
+  font-weight: 600;
+  text-align: left;
+  color: var(--text);
+  background: transparent;
+  border: 0;
+  border-radius: 7px;
+  cursor: pointer;
+}
+.export-pop button svg { width: 16px; height: 16px; color: var(--text-muted); flex-shrink: 0; }
+.export-pop button:hover,
+.export-pop button:focus-visible {
+  background: var(--accent-soft);
+  color: var(--accent);
+  outline: none;
+}
+.export-pop button:hover svg,
+.export-pop button:focus-visible svg { color: var(--accent); }
+
 .toggle { display: flex; align-items: center; gap: 6px; cursor: pointer; user-select: none; color: var(--text-muted); font-weight: 600; }
 .toggle input { accent-color: var(--accent); }
 

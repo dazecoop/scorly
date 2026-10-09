@@ -10,7 +10,7 @@
  * Writes scripts/output/compare-shot-*.png, which compose-slides.js then
  * composites into the wide store screenshots.
  *
- * Unlike the popup captures (a fixed 460x600 window), the compare view is a
+ * Unlike the popup captures (a fixed 500x600 window), the compare view is a
  * full tab, so each shot is a clip around the region worth showing. The clips
  * are kept close to the width they're displayed at in the slide, so the text
  * in them stays readable at 1280x800.
@@ -93,7 +93,7 @@ async function main() {
     await sitePage.setViewport({ width: 1100, height: 800 });
 
     const popup = await browser.newPage();
-    await popup.setViewport({ width: 460, height: 600 });
+    await popup.setViewport({ width: 500, height: 600 });
     await popup.emulateMediaFeatures([{ name: 'prefers-color-scheme', value: 'dark' }]);
 
     for (const url of [liveUrl, localUrl]) {

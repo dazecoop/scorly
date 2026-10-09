@@ -102,6 +102,7 @@ function initCountTiles() {
 
 function initExportButtons() {
   el('exportJson').addEventListener('click', () => { if (lastData) exportJson(lastData, lastScoreResult); });
+  el('exportMd').addEventListener('click', () => { if (lastData) exportMarkdown(lastData, lastScoreResult); });
   el('exportCsv').addEventListener('click', () => { if (lastData) exportCsv(lastData, lastScoreResult); });
   el('exportPdf').addEventListener('click', () => { if (lastData) exportPdf(lastData, lastScoreResult); });
 }
@@ -123,7 +124,7 @@ function initTheme() {
 // Compare
 // ---------------------------------------------------------------------------
 
-// The diff is far too wide for a 460px popup, so the popup's job is only to
+// The diff is far too wide for the popup, so the popup's job is only to
 // capture a snapshot and hand off to compare.html in a full tab.
 async function refreshSnapCount() {
   const list = await scorlyLoadSnapshots();

@@ -90,6 +90,62 @@ function toCsv(data, scoreResult) {
   return rows.map((r) => r.map(csvEscape).join(',')).join('\r\n');
 }
 
+function toMarkdown(data, scoreResult) {
+  const lines = [];
+  const pct = (n) => `${n}/100`;
+
+  lines.push('# Scorly report');
+  lines.push('');
+  lines.push(`**${data.url}**`);
+  lines.push('');
+  lines.push(`Analyzed ${new Date(data.analyzedAt).toLocaleString()}`);
+  lines.push('');
+  lines.push(`## Overall score: ${pct(scoreResult.overallScore)}`);
+  lines.push('');
+  lines.push(`${scoreResult.counts.issues} issues · ${scoreResult.counts.warnings} warnings · ${scoreResult.counts.passed} passed`);
+  lines.push('');
+  lines.push('| Category | Score |');
+  lines.push('| --- | --- |');
+  Object.keys(CATEGORY_LABELS).forEach((key) => {
+    lines.push(`| ${CATEGORY_LABELS[key]} | ${scoreResult.categoryScores[key]} |`);
+  });
+  lines.push('');
+
+  lines.push('## Page');
+  lines.push('');
+  lines.push(`- **Title** (${data.title.length} chars): ${data.title.text || '_missing_'}`);
+  lines.push(`- **Meta description** (${data.metaDescription.length} chars): ${data.metaDescription.text || '_missing_'}`);
+  lines.push(`- **Canonical**: ${data.canonical || '_missing_'}`);
+  lines.push(`- **Language**: ${data.lang || '_missing_'}`);
+  lines.push(`- **Word count**: ${data.content.wordCount} (${data.content.readTimeMin} min read, readability ${data.content.readability})`);
+  lines.push(`- **Headings**: H1 ${data.headings.counts.h1}, H2 ${data.headings.counts.h2}, H3 ${data.headings.counts.h3}`);
+  lines.push(`- **Links**: ${data.links.internal} internal, ${data.links.external} external, ${data.links.nofollow} nofollow`);
+  lines.push(`- **Images**: ${data.images.total} total, ${data.images.missingAlt} missing alt text`);
+  lines.push(`- **Structured data**: ${data.jsonLdTypes.length ? data.jsonLdTypes.join(', ') : '_none_'}`);
+  lines.push('');
+
+  // Issues first — a report is read for what needs fixing.
+  const order = { fail: 0, warn: 1, pass: 2 };
+  Object.keys(CATEGORY_LABELS).forEach((key) => {
+    const checks = scoreResult.categories[key];
+    if (!checks || !checks.length) return;
+    lines.push(`## ${CATEGORY_LABELS[key]} — ${pct(scoreResult.categoryScores[key])}`);
+    lines.push('');
+    checks.slice().sort((a, b) => order[a.status] - order[b.status]).forEach((c) => {
+      const mark = c.status === 'pass' ? 'x' : ' ';
+      lines.push(`- [${mark}] **${c.label}** (${c.status}) — ${c.detail}`);
+    });
+    lines.push('');
+  });
+
+  return lines.join('\n');
+}
+
+function exportMarkdown(data, scoreResult) {
+  const base = safeFilename(data.url);
+  downloadFile(`scorly-${base}.md`, toMarkdown(data, scoreResult), 'text/markdown');
+}
+
 function exportJson(data, scoreResult) {
   const base = safeFilename(data.url);
   downloadFile(`scorly-${base}.json`, JSON.stringify(buildExportPayload(data, scoreResult), null, 2), 'application/json');

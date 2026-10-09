@@ -170,6 +170,7 @@ function renderAll(pending) {
   el('localhostBadge').classList.toggle('hidden', !lastData.isLocalhost);
 
   renderOverview(lastData, lastScoreResult, { pending });
+  renderInsightsTab(lastData, lastScoreResult, scorlyComputeAiInsights(lastData, lastScoreResult));
   renderMetaTab(lastData);
   renderContentTab(lastData, lastScoreResult);
   renderHeadingsTab(lastData, lastScoreResult);
@@ -215,6 +216,74 @@ function initPlatformSwitch() {
     btn.classList.add('active');
     currentPlatform = btn.dataset.plat;
     if (lastData) renderOgCard(currentPlatform, getOgPreviewData(lastData));
+  });
+}
+
+// ---- "Ask your AI to fix these" ----
+// Builds a self-contained prompt (page context + the clicked list of
+// findings) and copies it, so the user can paste it straight into any AI
+// assistant. Pure clipboard write — nothing is sent anywhere.
+function buildAiFixPrompt(kind, checks) {
+  const lines = [];
+  lines.push('You are helping me fix SEO problems on my website. Below is an automated audit of one page, produced by the Scorly browser extension.');
+  lines.push('');
+  lines.push(`Page URL: ${lastData.url}`);
+  if (lastData.title && lastData.title.text) lines.push(`Page title: ${lastData.title.text}`);
+  if (lastScoreResult) lines.push(`Current SEO score: ${lastScoreResult.overallScore}/100`);
+  lines.push(`Audited: ${new Date(lastData.analyzedAt).toLocaleString()}`);
+  lines.push('');
+  lines.push(kind === 'issues'
+    ? `The audit found ${checks.length} failing check(s) on this page:`
+    : `The audit raised ${checks.length} warning(s) on this page (lower severity than hard failures, but worth fixing):`);
+  lines.push('');
+  checks.forEach((c, i) => {
+    const tags = [c.severity ? c.severity.toUpperCase() : null, c.category].filter(Boolean).join(' · ');
+    lines.push(`${i + 1}. ${c.label}${tags ? ` [${tags}]` : ''}`);
+    if (c.detail) lines.push(`   ${c.detail}`);
+  });
+  lines.push('');
+  lines.push('For each item, please:');
+  lines.push('1. Explain briefly why it matters.');
+  lines.push('2. Give me the exact fix — the HTML/code/config to add or change.');
+  lines.push('3. Start with the highest-impact items.');
+  lines.push('');
+  lines.push('If you need to know my stack (CMS, framework, hosting) to give exact steps, ask me that first.');
+  return lines.join('\n');
+}
+
+function copyText(text) {
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    return navigator.clipboard.writeText(text);
+  }
+  // Fallback for contexts where the async clipboard API is unavailable.
+  return new Promise((resolve, reject) => {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.position = 'fixed';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    const ok = document.execCommand('copy');
+    ta.remove();
+    ok ? resolve() : reject(new Error('copy failed'));
+  });
+}
+
+function initAiFixButtons() {
+  document.addEventListener('click', async (e) => {
+    const btn = e.target.closest('.ai-fix-btn');
+    if (!btn || !lastData) return;
+    let checks;
+    try { checks = JSON.parse(btn.dataset.aifix); } catch (err) { return; }
+    const original = btn.innerHTML;
+    try {
+      await copyText(buildAiFixPrompt(btn.dataset.aifixKind, checks));
+      btn.innerHTML = 'Prompt copied ✓ — paste it into your AI assistant';
+    } catch (err) {
+      btn.innerHTML = 'Copy failed';
+    }
+    btn.disabled = true;
+    setTimeout(() => { btn.innerHTML = original; btn.disabled = false; }, 2200);
   });
 }
 
@@ -301,6 +370,7 @@ document.addEventListener('DOMContentLoaded', () => {
   initTabs();
   initPlatformSwitch();
   initCountTiles();
+  initAiFixButtons();
   initExportButtons();
   initTheme();
   initCompare();

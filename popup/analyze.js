@@ -23,6 +23,72 @@ async function scorlyFetchOk(url, ms) {
   }
 }
 
+// Fetches a small text file and returns its body (or null). Used for
+// robots.txt so the AI-crawler rules can be parsed from the same request
+// that already proves the file exists.
+async function scorlyFetchText(url, ms, maxBytes = 100000) {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), ms);
+  try {
+    const res = await fetch(url, { signal: ctrl.signal, cache: 'no-store' });
+    if (!res.ok) return null;
+    const text = await res.text();
+    return text.slice(0, maxBytes);
+  } catch (e) {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// The AI assistant/training crawlers worth knowing about. A site that blocks
+// them in robots.txt is (deliberately or not) invisible to the AI answer
+// engines that increasingly send traffic.
+const SCORLY_AI_BOTS = [
+  { bot: 'GPTBot', engine: 'ChatGPT (training)' },
+  { bot: 'OAI-SearchBot', engine: 'ChatGPT Search' },
+  { bot: 'ChatGPT-User', engine: 'ChatGPT (browsing)' },
+  { bot: 'ClaudeBot', engine: 'Claude' },
+  { bot: 'anthropic-ai', engine: 'Claude (training)' },
+  { bot: 'PerplexityBot', engine: 'Perplexity' },
+  { bot: 'Google-Extended', engine: 'Gemini (training)' },
+  { bot: 'CCBot', engine: 'Common Crawl' },
+];
+
+// Minimal robots.txt group parser: for each AI bot, is "/" disallowed under
+// its own user-agent group or under *? (Longest-match rules and wildcards
+// beyond a bare "Disallow: /" are out of scope — the blanket block is the
+// pattern that actually occurs in the wild.)
+function scorlyParseAiBotAccess(robotsText) {
+  if (!robotsText) return SCORLY_AI_BOTS.map((b) => ({ ...b, allowed: true, explicit: false }));
+  const groups = []; // { agents: [..], disallowAll, allowAll }
+  let current = null;
+  robotsText.split(/\r?\n/).forEach((line) => {
+    const clean = line.replace(/#.*$/, '').trim();
+    const m = clean.match(/^([a-z-]+)\s*:\s*(.*)$/i);
+    if (!m) return;
+    const key = m[1].toLowerCase();
+    const val = m[2].trim();
+    if (key === 'user-agent') {
+      // Consecutive user-agent lines share one group; any other directive closes it.
+      if (!current || current.closed) { current = { agents: [], disallowAll: false, allowAll: false, closed: false }; groups.push(current); }
+      current.agents.push(val.toLowerCase());
+    } else if (current) {
+      if (key === 'disallow' && (val === '/' || val === '/*')) current.disallowAll = true;
+      if (key === 'allow' && val === '/') current.allowAll = true;
+      current.closed = true;
+    }
+  });
+  return SCORLY_AI_BOTS.map((b) => {
+    const name = b.bot.toLowerCase();
+    const own = groups.filter((g) => g.agents.includes(name));
+    const star = groups.filter((g) => g.agents.includes('*'));
+    const pick = own.length ? own : star;
+    const blocked = pick.some((g) => g.disallowAll) && !pick.some((g) => g.allowAll);
+    return { ...b, allowed: !blocked, explicit: own.length > 0 };
+  });
+}
+
 function scorlyCheckFavicon(url) {
   if (!url) return Promise.resolve(false);
   return new Promise((resolve) => {
@@ -123,6 +189,85 @@ async function scorlyFetchSecurityHeaders(url, ms) {
   }
 }
 
+// Does the site serve a real 404 for a URL that cannot exist? A 200 here
+// (soft 404) means search engines may index junk URLs; a tiny default body
+// means users hitting a dead link get a bare server error page.
+async function scorlyCheck404Page(origin, ms) {
+  const probe = origin + '/scorly-404-probe-' + Math.random().toString(36).slice(2, 10);
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), ms);
+  try {
+    const res = await fetch(probe, { signal: ctrl.signal, cache: 'no-store' });
+    let bodyLength = 0;
+    try { bodyLength = (await res.text()).length; } catch (e) { /* ignore */ }
+    return { status: res.status, soft404: res.ok, custom: bodyLength > 1500, bodyLength };
+  } catch (e) {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// Samples the page's heaviest same-origin static assets and re-requests
+// them to read caching headers and spot unminified JS/CSS — the only way to
+// see response headers/bodies from an extension. Bounded like the link
+// checker: a handful of requests, all to the site being analyzed.
+async function scorlyCheckAssets(data, { maxAssets = 8, perRequestMs = 4000 } = {}) {
+  const sameOrigin = (data.resources || []).filter((r) => {
+    try { return new URL(r.url).hostname === data.hostname && r.type !== 'document'; } catch (e) { return false; }
+  });
+  const isStatic = (u) => /\.(js|mjs|css|png|jpe?g|webp|avif|gif|svg|woff2?)(\?|$)/i.test(u);
+  const targets = sameOrigin
+    .filter((r) => isStatic(r.url))
+    .sort((a, b) => (b.transferSize || 0) - (a.transferSize || 0))
+    .slice(0, maxAssets);
+  if (!targets.length) return null;
+
+  const results = [];
+  for (const r of targets) {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), perRequestMs);
+    try {
+      const isCode = /\.(js|mjs|css)(\?|$)/i.test(r.url);
+      const res = await fetch(r.url, { signal: ctrl.signal, cache: 'force-cache' });
+      const cacheControl = res.headers.get('cache-control');
+      const expires = res.headers.get('expires');
+      // "Cacheable" = any positive caching signal; no-store/no-cache/max-age=0
+      // or no header at all means every repeat visitor re-downloads it.
+      const cacheable = cacheControl
+        ? !/no-store|no-cache|max-age=0(?!\d)/i.test(cacheControl) && /max-age=[1-9]|immutable|public/i.test(cacheControl)
+        : !!expires;
+      let minified = null;
+      if (isCode) {
+        const text = (await res.text()).slice(0, 200000);
+        if (text.length > 2500) {
+          const lines = text.split('\n');
+          const avgLine = text.length / lines.length;
+          // Minified code has very long lines; hand-written code averages <200 chars.
+          minified = avgLine > 250;
+        }
+      } else {
+        try { if (res.body) await res.body.cancel(); } catch (e) { /* ignore */ }
+      }
+      results.push({ url: r.url, kind: isCode ? (/\.css/i.test(r.url) ? 'css' : 'js') : 'asset', cacheControl, cacheable, minified });
+    } catch (e) {
+      /* unreachable asset — skip rather than guess */
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+  if (!results.length) return null;
+  const code = results.filter((x) => x.minified !== null);
+  return {
+    checked: results.length,
+    uncached: results.filter((x) => !x.cacheable).length,
+    uncachedList: results.filter((x) => !x.cacheable).map((x) => x.url),
+    codeChecked: code.length,
+    unminified: code.filter((x) => !x.minified).length,
+    unminifiedList: code.filter((x) => !x.minified).map((x) => x.url),
+  };
+}
+
 // Checks that every internal link on the page actually resolves. Bounded so a
 // link-heavy page can't stall the analysis: 60 unique targets, 6 at a time,
 // and anything still unchecked when the time budget runs out is skipped
@@ -185,16 +330,23 @@ async function scorlyAnalyzeTab(tabId, { onPartial } = {}) {
   let origin;
   try { origin = new URL(data.url).origin; } catch (e) { origin = null; }
 
-  const [robotsTxt, sitemapXml, faviconOk, linkCheck, wwwRedirect, securityHeaders] = await Promise.all([
-    origin ? scorlyFetchOk(origin + '/robots.txt', 4000) : Promise.resolve(false),
+  const [robotsTxtBody, sitemapXml, faviconOk, linkCheck, wwwRedirect, securityHeaders, llmsTxt, notFoundPage, assetCheck] = await Promise.all([
+    origin ? scorlyFetchText(origin + '/robots.txt', 4000) : Promise.resolve(null),
     origin ? scorlyFetchOk(origin + '/sitemap.xml', 4000) : Promise.resolve(false),
     scorlyCheckFavicon(data.favicon),
     scorlyCheckInternalLinks(data),
     origin ? scorlyCheckWwwRedirect(data.url, 4000) : Promise.resolve(null),
     (origin && !data.isLocalhost) ? scorlyFetchSecurityHeaders(data.url, 4000) : Promise.resolve(null),
+    origin ? scorlyFetchOk(origin + '/llms.txt', 4000) : Promise.resolve(false),
+    origin ? scorlyCheck404Page(origin, 5000) : Promise.resolve(null),
+    scorlyCheckAssets(data),
   ]);
 
-  data.robotsTxt = robotsTxt;
+  data.robotsTxt = robotsTxtBody !== null;
+  data.aiBotAccess = scorlyParseAiBotAccess(robotsTxtBody);
+  data.llmsTxt = llmsTxt;
+  data.notFoundPage = notFoundPage;
+  data.assetCheck = assetCheck;
   data.sitemapXml = sitemapXml;
   data.faviconOk = faviconOk;
   data.linkCheck = linkCheck;

@@ -236,7 +236,7 @@ const SCORLY_CATEGORY_LABELS = {
   schema: 'Structured data',
   security: 'Security',
   mobile: 'Mobile',
-  aiSeo: 'AI SEO',
+  aiSeo: 'AI Visibility',
   eeat: 'E-E-A-T',
 };
 

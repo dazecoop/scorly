@@ -32,6 +32,12 @@ function buildExportPayload(data, scoreResult) {
     url: data.url,
     analyzedAt: data.analyzedAt,
     overallScore: scoreResult.overallScore,
+    // aiVisibility is already in categoryScores.aiSeo below (the two were
+    // unified so every surface agrees on one number) — aiInsights is the
+    // richer breakdown behind it.
+    aiInsights: (typeof scorlyComputeAiInsights === 'function') ? scorlyComputeAiInsights(data, scoreResult) : undefined,
+    aiBotAccess: data.aiBotAccess || null,
+    llmsTxt: data.llmsTxt,
     categoryScores: scoreResult.categoryScores,
     counts: scoreResult.counts,
     meta: {

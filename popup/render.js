@@ -32,7 +32,7 @@ function scoreLabel(score) {
 
 const CATEGORY_LABELS = {
   technical: 'Technical', content: 'Content', perf: 'Perf', schema: 'Schema',
-  security: 'Security', mobile: 'Mobile', aiSeo: 'AI SEO', eeat: 'E-E-A-T',
+  security: 'Security', mobile: 'Mobile', aiSeo: 'AI Visibility', eeat: 'E-E-A-T',
 };
 
 function statusIcon(status) {
@@ -68,9 +68,13 @@ function renderCheckList(checks) {
 // Overview count tiles can scroll/link straight to them.
 function renderGroupedChecks(checks, opts) {
   opts = opts || {};
-  const issues = checks.filter((c) => c.status === 'fail');
-  const warnings = checks.filter((c) => c.status === 'warn');
-  const passed = checks.filter((c) => c.status === 'pass');
+  // Within each group, order by severity (high → med → low). The sort is
+  // stable, so checks of equal severity keep their category/tab order.
+  const SEV_RANK = { high: 0, med: 1, low: 2 };
+  const bySeverity = (list) => list.slice().sort((a, b) => (SEV_RANK[a.severity] ?? 3) - (SEV_RANK[b.severity] ?? 3));
+  const issues = bySeverity(checks.filter((c) => c.status === 'fail'));
+  const warnings = bySeverity(checks.filter((c) => c.status === 'warn'));
+  const passed = bySeverity(checks.filter((c) => c.status === 'pass'));
 
   function row(c) {
     return `
@@ -88,11 +92,28 @@ function renderGroupedChecks(checks, opts) {
     return opts.idPrefix ? ` id="${opts.idPrefix}-${suffix}"` : '';
   }
 
+  // "Ask your AI to fix these": copies a ready-made prompt (page context +
+  // this list) to the clipboard. The checks ride along in a data attribute so
+  // the click handler (popup.js) doesn't need to know which filtered subset
+  // this particular list was rendered from.
+  function aiFixButton(kind, checks) {
+    const payload = escapeHtml(JSON.stringify(checks.map((c) => ({
+      label: c.label, detail: c.detail, severity: c.severity, category: CATEGORY_LABELS[c.category] || c.category || null,
+    }))));
+    return `<div class="ai-fix-row">
+      <button class="ai-fix-btn" data-aifix-kind="${kind}" data-aifix="${payload}">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+        Ask your AI to fix these
+      </button>
+      <span class="ai-fix-hint">Copies a ready-to-paste prompt — page details plus this list — for Claude, ChatGPT, Copilot or any AI assistant.</span>
+    </div>`;
+  }
+
   let html = '';
   html += `<div class="group-title"${idAttr('group-fail')}>✕ Issues (${issues.length})</div>`;
-  html += issues.length ? issues.map(row).join('') : '<p class="empty-note">No issues here — nothing failed.</p>';
+  html += issues.length ? issues.map(row).join('') + aiFixButton('issues', issues) : '<p class="empty-note">No issues here — nothing failed.</p>';
   html += `<div class="group-title"${idAttr('group-warn')}>! Warnings (${warnings.length})</div>`;
-  html += warnings.length ? warnings.map(row).join('') : '<p class="empty-note">No warnings here.</p>';
+  html += warnings.length ? warnings.map(row).join('') + aiFixButton('warnings', warnings) : '<p class="empty-note">No warnings here.</p>';
   html += `<div class="group-title"${idAttr('group-pass')}>✓ Passed (${passed.length})</div>`;
   html += passed.length ? passed.map(row).join('') : '<p class="empty-note">Nothing passed here yet.</p>';
   return html;
@@ -226,9 +247,16 @@ function renderContentTab(data, scoreResult) {
     <div class="tile"><div class="tile-num">${escapeHtml(String(v))}</div><div class="tile-label">${escapeHtml(l)}</div></div>
   `).join('') + categoryScoreBox(score, 'CONTENT SCORE') + '</div>';
 
-  html += '<div class="panel-title">Top Keywords</div>';
+  html += '<div class="panel-title">Keyword Cloud</div>';
   if (c.topKeywords.length) {
-    html += '<div class="keyword-chips">' + c.topKeywords.map((k) => `<span class="chip">${escapeHtml(k.word)} <b>${k.count}</b> (${k.pct}%)</span>`).join('') + '</div>';
+    // Font size scales with sqrt of frequency so one dominant word doesn't
+    // flatten everything else to the minimum.
+    const max = Math.sqrt(c.topKeywords[0].count);
+    html += '<div class="kw-cloud">' + c.topKeywords.map((k) => {
+      const size = (11 + (Math.sqrt(k.count) / max) * 11).toFixed(1);
+      return `<span class="kw-cloud-word" style="font-size:${size}px" title="${k.count}× (${k.pct}%)">${escapeHtml(k.word)}</span>`;
+    }).join(' ') + '</div>';
+    html += '<div class="keyword-chips">' + c.topKeywords.slice(0, 12).map((k) => `<span class="chip">${escapeHtml(k.word)} <b>${k.count}</b> (${k.pct}%)</span>`).join('') + '</div>';
   } else {
     html += '<p class="empty-note">Not enough text to extract keywords.</p>';
   }
@@ -319,6 +347,7 @@ function renderImagesTab(data) {
     <div class="tile"><div class="tile-num">${imgs.total}</div><div class="tile-label">Total</div></div>
     <div class="tile"><div class="tile-num">${imgs.missingAlt}</div><div class="tile-label">Missing alt</div></div>
     <div class="tile"><div class="tile-num">${imgs.oversized != null ? imgs.oversized : '—'}</div><div class="tile-label">Oversized</div></div>
+    <div class="tile"><div class="tile-num">${imgs.distorted != null ? imgs.distorted : '—'}</div><div class="tile-label">Distorted</div></div>
     <div class="tile"><div class="tile-num">${imgs.legacyFormat != null ? imgs.legacyFormat : '—'}</div><div class="tile-label">PNG/JPG/GIF</div></div>
     <div class="tile"><div class="tile-num">${imgs.missingDimensions != null ? imgs.missingDimensions : '—'}</div><div class="tile-label">No width/height</div></div>
     <div class="tile"><div class="tile-num">${imgs.lazyLoaded != null ? imgs.lazyLoaded : '—'}</div><div class="tile-label">Lazy-loaded</div></div>
@@ -338,6 +367,7 @@ function renderImagesTab(data) {
       if (img.fetchpriority) facts.push('priority=' + img.fetchpriority);
       const flags = [];
       if (img.oversized) flags.push('<span class="img-flag flag-warn">oversized</span>');
+      if (img.distorted) flags.push('<span class="img-flag flag-warn">distorted</span>');
       if (img.format && ['png', 'jpg', 'gif', 'bmp'].includes(img.format)) flags.push('<span class="img-flag flag-warn">WebP/AVIF candidate</span>');
       if (img.hasExplicitSize === false) flags.push('<span class="img-flag flag-warn">no width/height</span>');
       return `
@@ -424,9 +454,49 @@ function renderPerfTab(data, scoreResult) {
   if (p.inp == null) {
     html += '<p class="empty-note">INP needs a real interaction — click or type on the page before analyzing to measure it. TBT and the render-blocking flag are only available in Chromium browsers.</p>';
   }
+  // Banded gauges: where each measured vital sits inside Google's
+  // good / needs-improvement / poor bands, speedtest-style.
+  const gauges = [
+    ['ttfb', 'Time to First Byte'], ['fcp', 'First Contentful Paint'], ['lcp', 'Largest Contentful Paint'],
+    ['cls', 'Cumulative Layout Shift'], ['tbt', 'Total Blocking Time ≈'], ['inp', 'Interaction to Next Paint'],
+  ].map(([m, label]) => renderVitalGauge(m, p[m], label)).filter(Boolean);
+  if (gauges.length) html += '<div class="panel-title">Web Vitals vs Google bands</div>' + gauges.join('');
   html += renderWaterfall(data.resources);
   html += '<div class="panel-title">Checks</div>' + renderGroupedChecks(scoreResult.categories.perf);
   el('perfContent').innerHTML = html;
+}
+
+// A green/amber/red banded bar with a marker showing where the measured
+// value sits relative to Google's published thresholds for that vital.
+// Green runs to the "good" threshold, amber to "needs improvement", red
+// beyond; the scale ends at 1.5× the poor threshold so a bad value still
+// lands visibly inside the bar.
+function renderVitalGauge(metric, value, label) {
+  const bands = SCORLY_VITAL_BANDS[metric];
+  if (!bands || value == null) return '';
+  const [good, poor] = bands;
+  const scaleMax = poor * 1.5;
+  const pct = (v) => Math.min(100, (v / scaleMax) * 100);
+  const fmt = (v) => metric === 'cls' ? String(v) : (v >= 1000 ? ((v / 1000) % 1 ? (v / 1000).toFixed(1) : (v / 1000)) + ' s' : v + ' ms');
+  const status = scorlyVitalStatus(metric, value);
+  const markerPct = Math.max(1.5, Math.min(98.5, pct(value)));
+  return `
+  <div class="gauge">
+    <div class="gauge-head">
+      <span class="gauge-label">${escapeHtml(label)}</span>
+      <span class="gauge-value" style="color:var(--${status})">${escapeHtml(fmt(value))}</span>
+    </div>
+    <div class="gauge-bar-wrap">
+      <div class="gauge-marker" style="left:${markerPct}%"><div class="gauge-marker-tip"></div></div>
+      <div class="gauge-bar">
+        <div class="gauge-seg seg-pass" style="width:${pct(good)}%"></div>
+        <div class="gauge-seg seg-warn" style="width:${pct(poor) - pct(good)}%"></div>
+        <div class="gauge-seg seg-fail" style="width:${100 - pct(poor)}%"></div>
+      </div>
+      <div class="gauge-tick" style="left:${pct(good)}%"><span>${escapeHtml(fmt(good))}</span></div>
+      <div class="gauge-tick" style="left:${pct(poor)}%"><span>${escapeHtml(fmt(poor))}</span></div>
+    </div>
+  </div>`;
 }
 
 // Per-request breakdown: totals by type, then the heaviest requests with
@@ -565,4 +635,121 @@ function renderOgTab(data) {
     ? 'Open Graph tags detected — showing how this page will appear when shared.'
     : 'No Open Graph tags found. Showing a best-effort fallback preview using the page title, meta description, and favicon — actual rendering will vary by platform.';
   return preview;
+}
+
+// ===================== AI INSIGHTS =====================
+// Everything on this tab is rule-based and computed locally (scoring.js
+// scorlyComputeAiInsights) — "AI" refers to the audience (AI answer
+// engines), not the method. No model, no network.
+function renderInsightsTab(data, scoreResult, insights) {
+  const vis = insights.aiVisibility != null ? insights.aiVisibility : (scoreResult && scoreResult.aiVisibility) || 0;
+
+  let html = `<div class="score-row compact">
+    <div class="score-circle-wrap small">
+      <svg viewBox="0 0 120 120" class="score-circle">
+        <circle cx="60" cy="60" r="52" class="score-bg" />
+        <circle cx="60" cy="60" r="52" class="score-fg" style="stroke:${scoreColor(vis)};stroke-dashoffset:${326.7 - (326.7 * vis) / 100}"/>
+      </svg>
+      <div class="score-number" style="color:${scoreColor(vis)}">${vis}</div>
+      <div class="score-caption">AI<br>VISIBILITY</div>
+    </div>
+    <div class="insight-vis-blurb">
+      <p>How visible this page can be to AI answer engines (ChatGPT, Claude, Perplexity, Gemini): crawler access, machine-readable structure, trust signals and freshness.</p>
+    </div>
+  </div>
+  <div class="info-alert">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
+    <span>Computed locally from page signals — no AI involved, nothing leaves your browser.</span>
+  </div>`;
+
+  // ---- AI crawler access ----
+  if (data.aiBotAccess) {
+    html += '<div class="panel-title">AI Crawler Access (robots.txt)</div><div class="bot-grid">';
+    html += data.aiBotAccess.map((b) => `
+      <div class="bot-row">
+        <span class="bot-dot" style="background:var(--${b.allowed ? 'pass' : 'fail'})"></span>
+        <span class="bot-name">${escapeHtml(b.bot)}</span>
+        <span class="bot-engine">${escapeHtml(b.engine)}</span>
+        <span class="status-pill status-${b.allowed ? 'pass' : 'fail'}">${b.allowed ? 'ALLOWED' : 'BLOCKED'}</span>
+      </div>`).join('');
+    html += '</div>';
+    if (data.llmsTxt !== undefined) {
+      html += `<p class="empty-note">llms.txt: ${data.llmsTxt ? 'found at site root ✓' : 'not found (optional, emerging convention).'}</p>`;
+    }
+  }
+
+  // ---- AI SEO checks (the markup-level checklist this score is built from) ----
+  if (scoreResult && scoreResult.categories && scoreResult.categories.aiSeo) {
+    html += '<div class="panel-title">AI SEO Checks</div>';
+    html += '<p class="checks-intro">The structural checks behind the AI Visibility score above — structured data, schema, semantic HTML and crawler access.</p>';
+    html += renderGroupedChecks(scoreResult.categories.aiSeo);
+  }
+
+  // ---- Domain business context ----
+  const bcx = insights.businessContext;
+  html += '<div class="panel-title">Domain Business Context</div>';
+  if (bcx.captured || bcx.about) {
+    const rows = [
+      ['Site / business name', bcx.siteName],
+      ['Schema type', bcx.schemaType],
+      ['What this page is about', bcx.about],
+      ['Location', bcx.locality],
+      ['Telephone', bcx.telephone],
+      ['Social profiles', bcx.socialProfiles && bcx.socialProfiles.length ? bcx.socialProfiles.join(', ') : null],
+    ].filter(([, v]) => v);
+    html += rows.length ? rows.map(([l, v]) => `
+      <div class="meta-card"><div class="meta-card-head"><span class="meta-card-label">${escapeHtml(l)}</span></div>
+      <div class="meta-card-value">${escapeHtml(String(v))}</div></div>`).join('')
+      : '<p class="empty-note">No business identity signals found (no Organization schema, og:site_name or meta description).</p>';
+    html += '<p class="empty-note">Detected from the page’s own markup (structured data, Open Graph, meta tags) — shown verbatim, not generated.</p>';
+  } else {
+    html += '<p class="empty-note">Captured on newer analyses — hit re-analyze to populate this section.</p>';
+  }
+
+  // ---- Strengths & weaknesses ----
+  html += '<div class="panel-title">Content Strengths &amp; Weaknesses</div>';
+  html += '<div class="sw-cols">';
+  html += '<div class="sw-col"><div class="sw-col-title sw-strength">Strengths</div>' +
+    (insights.strengths.length ? insights.strengths.map((s) => `<div class="sw-item"><span class="sw-ic" style="color:var(--pass)">✓</span><div><b>${escapeHtml(s.label)}</b><div class="sw-detail">${escapeHtml(s.detail)}</div></div></div>`).join('') : '<p class="empty-note">Nothing stood out.</p>') + '</div>';
+  html += '<div class="sw-col"><div class="sw-col-title sw-weakness">Weaknesses</div>' +
+    (insights.weaknesses.length ? insights.weaknesses.map((s) => `<div class="sw-item"><span class="sw-ic" style="color:var(--warn)">!</span><div><b>${escapeHtml(s.label)}</b><div class="sw-detail">${escapeHtml(s.detail)}</div></div></div>`).join('') : '<p class="empty-note">No notable weaknesses detected.</p>') + '</div>';
+  html += '</div>';
+
+  // ---- Content trust score ----
+  html += '<div class="panel-title">Content Trust Score</div>';
+  if (insights.trust) {
+    const t = insights.trust;
+    html += `<div class="trust-row">
+      <div class="trust-big" style="color:${scoreColor(t.score)}">${t.score}%</div>
+      <div class="bar-list">` +
+      t.subs.map((s) => `
+        <div class="bar-row" title="${escapeHtml(s.detail)}">
+          <div class="bar-label trust-label">${escapeHtml(s.label)}</div>
+          <div class="bar-track"><div class="bar-fill" style="width:${s.score}%;background:${scoreColor(s.score)}"></div></div>
+          <div class="bar-value">${s.score}%</div>
+        </div>`).join('') +
+      '</div></div>';
+  } else {
+    html += '<p class="empty-note">Captured on newer analyses — hit re-analyze to populate this section.</p>';
+  }
+
+  // ---- Content freshness ----
+  html += '<div class="panel-title">Content Freshness</div>';
+  if (insights.freshness) {
+    const f = insights.freshness;
+    html += `<div class="trust-row"><div class="trust-big" style="color:${scoreColor(f.score)}">${f.score}%</div><div class="fresh-signals">`;
+    html += f.positives.map((p) => `<div class="sw-item"><span class="sw-ic" style="color:var(--pass)">✓</span><div>${escapeHtml(p)}</div></div>`).join('');
+    html += f.negatives.map((n) => `<div class="sw-item"><span class="sw-ic" style="color:var(--warn)">!</span><div>${escapeHtml(n)}</div></div>`).join('');
+    html += '</div></div>';
+  } else {
+    html += '<p class="empty-note">Captured on newer analyses — hit re-analyze to populate this section.</p>';
+  }
+
+  // ---- Opportunities ----
+  html += '<div class="panel-title">Content Opportunities</div>';
+  html += insights.opportunities.length
+    ? '<div class="opps">' + insights.opportunities.map((o) => `<div class="opp-item"><span class="opp-bullet">→</span><div>${escapeHtml(o)}</div></div>`).join('') + '</div>'
+    : '<p class="empty-note">No obvious quick wins — the fundamentals are covered.</p>';
+
+  el('insightsContent').innerHTML = html;
 }

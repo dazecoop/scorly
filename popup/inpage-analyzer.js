@@ -118,7 +118,18 @@ async function scorlyInPageAnalyze() {
     // column" waste. Only judged once both sizes are known and non-trivial.
     const oversized = !!(naturalW && renderedW > 20 &&
       naturalW >= renderedW * 2 * Math.min(2, window.devicePixelRatio || 1));
+    // Distorted = the rendered box squashes/stretches the intrinsic aspect
+    // ratio by more than ~15% (and CSS isn't letting object-fit absorb it).
+    let distorted = false;
+    if (naturalW && naturalH && renderedW > 20 && renderedH > 20) {
+      const ratioDrift = (naturalW / naturalH) / (renderedW / renderedH);
+      if (ratioDrift > 1.15 || ratioDrift < 0.87) {
+        const fit = (getComputedStyle(img).objectFit || 'fill');
+        distorted = fit === 'fill';
+      }
+    }
     return {
+      distorted,
       src,
       alt: alt || '',
       missing: !img.hasAttribute('alt') || img.getAttribute('alt').trim() === '',
@@ -139,6 +150,7 @@ async function scorlyInPageAnalyze() {
     missingAlt: imageList.filter((i) => i.missing).length + Math.max(0, imgEls.length - imageList.length),
     missingDimensions: imageList.filter((i) => !i.hasExplicitSize).length,
     oversized: imageList.filter((i) => i.oversized).length,
+    distorted: imageList.filter((i) => i.distorted).length,
     legacyFormat: imageList.filter((i) => i.format && LEGACY_FORMATS.includes(i.format)).length,
     lazyLoaded: imageList.filter((i) => i.loading === 'lazy').length,
     list: imageList,
@@ -214,7 +226,7 @@ async function scorlyInPageAnalyze() {
   });
   const topKeywords = Array.from(freq.entries())
     .sort((a, b) => b[1] - a[1])
-    .slice(0, 12)
+    .slice(0, 30)
     .map(([word, count]) => ({ word, count, pct: wordCount ? Math.round((count / wordCount) * 1000) / 10 : 0 }));
 
   // ---------- Text blocks (for exact-wording comparison) ----------
@@ -416,9 +428,215 @@ async function scorlyInPageAnalyze() {
   const publishMeta = metaContent('meta[property="article:published_time"]') || metaContent('meta[name="date"]');
   const hasPublishDate = !!(publishMeta || document.querySelector('time[datetime]') || jsonLd.some((j) => JSON.stringify(j).includes('datePublished')));
   const lowerLinks = anchors.map((a) => ((a.getAttribute('href') || '') + ' ' + textOf(a)).toLowerCase());
-  const hasAboutLink = lowerLinks.some((s) => /\babout\b/.test(s));
-  const hasContactLink = lowerLinks.some((s) => /\bcontact\b/.test(s));
-  const hasPrivacyLink = lowerLinks.some((s) => /\bprivacy\b/.test(s));
+  // Each check greps every link's URL + anchor text for common names of
+  // that page type, and remembers WHICH term matched so the check detail can
+  // show its evidence instead of a bare pass/fail.
+  function findLinkTerm(patterns) {
+    for (const [re, name] of patterns) {
+      if (lowerLinks.some((s) => re.test(s))) return name;
+    }
+    return null;
+  }
+  const aboutMatch = findLinkTerm([
+    [/\babout\b|about-us|aboutus/, 'about'],
+    [/our[\s_-]story|ourstory/, 'our story'],
+    [/who[\s_-]we[\s_-]are/, 'who we are'],
+    [/(our|the|meet[\s_-](our|the))[\s_-]team\b/, 'our team'],
+    [/\bcompany\b/, 'company'],
+    [/\bmission\b/, 'mission'],
+  ]);
+  const contactMatch = findLinkTerm([
+    [/\bcontact\b|contact-us|contactus/, 'contact'],
+    [/get[\s_-]in[\s_-]touch/, 'get in touch'],
+    [/reach[\s_-](us|out)/, 'reach us'],
+    [/\bsupport\b/, 'support'],
+    [/\bhelp\b|help[\s_-]cent(er|re)/, 'help'],
+  ]);
+  const privacyMatch = findLinkTerm([
+    [/\bprivacy\b/, 'privacy'],
+    [/data[\s_-]protection/, 'data protection'],
+  ]);
+  const hasAboutLink = !!aboutMatch;
+  const hasContactLink = !!contactMatch;
+  const hasPrivacyLink = !!privacyMatch;
+
+  // ---------- Page hygiene ----------
+  // Checks ported from hosted SEO checkers that are pure DOM/Performance
+  // reads: deprecated markup, meta refresh, DOM weight, unsafe _blank links,
+  // harvestable emails, analytics/CDN detection, responsive CSS, compression.
+  const DEPRECATED_TAGS = ['center', 'font', 'marquee', 'blink', 'frame', 'frameset', 'big', 'strike', 'tt', 'acronym', 'applet', 'basefont', 'dir'];
+  const deprecatedFound = {};
+  DEPRECATED_TAGS.forEach((tag) => {
+    const n = document.getElementsByTagName(tag).length;
+    if (n) deprecatedFound[tag] = n;
+  });
+
+  const metaRefresh = metaContent('meta[http-equiv="refresh" i]');
+  const domSize = document.getElementsByTagName('*').length;
+
+  let unsafeCrossOrigin = 0;
+  anchors.forEach((a) => {
+    if ((a.getAttribute('target') || '').toLowerCase() !== '_blank') return;
+    let external = false;
+    try { external = new URL(a.getAttribute('href'), document.baseURI).hostname !== location.hostname; } catch (e) { return; }
+    const rel = (a.getAttribute('rel') || '').toLowerCase();
+    if (external && !rel.includes('noopener') && !rel.includes('noreferrer')) unsafeCrossOrigin++;
+  });
+
+  // Emails sitting in visible text (not mailto: links) are harvestable by
+  // spam bots; mailto links are reported separately since they're deliberate.
+  const textEmails = Array.from(new Set((bodyText.match(/\b[\w.+-]+@[\w-]+(?:\.[\w-]+)+\b/g) || [])
+    .filter((e) => !/\.(png|jpg|jpeg|gif|webp|svg|css|js)$/i.test(e)))).slice(0, 5);
+
+  const resourceUrls = (() => {
+    try { return performance.getEntriesByType('resource').map((r) => r.name); } catch (e) { return []; }
+  })().concat(Array.from(document.scripts).map((s) => s.src).filter(Boolean));
+  const ANALYTICS_PATTERNS = [
+    [/googletagmanager\.com|google-analytics\.com|gtag\/js/i, 'Google Analytics / GTM'],
+    [/plausible\.io/i, 'Plausible'], [/matomo|piwik/i, 'Matomo'], [/usefathom\.com/i, 'Fathom'],
+    [/clarity\.ms/i, 'MS Clarity'], [/hotjar\.com/i, 'Hotjar'], [/segment\.(io|com)/i, 'Segment'],
+    [/mixpanel\.com/i, 'Mixpanel'], [/umami\./i, 'Umami'], [/cdn\.heapanalytics/i, 'Heap'],
+    [/static\.cloudflareinsights\.com/i, 'Cloudflare Analytics'], [/connect\.facebook\.net.*fbevents/i, 'Meta Pixel'],
+  ];
+  const analytics = ANALYTICS_PATTERNS.filter(([re]) => resourceUrls.some((u) => re.test(u))).map(([, name]) => name);
+  const CDN_PATTERNS = [
+    [/cloudfront\.net/i, 'CloudFront'], [/cdn\.cloudflare|cdnjs\.cloudflare/i, 'Cloudflare CDN'],
+    [/fastly\.(net|com)/i, 'Fastly'], [/akamai(zed|hd)?\.net/i, 'Akamai'], [/jsdelivr\.net/i, 'jsDelivr'],
+    [/unpkg\.com/i, 'unpkg'], [/azureedge\.net/i, 'Azure CDN'], [/\bbunny(cdn)?\.net/i, 'Bunny'],
+    [/gstatic\.com|googleapis\.com/i, 'Google CDN'], [/\.b-cdn\.net/i, 'Bunny'], [/wp\.com/i, 'WordPress CDN'],
+  ];
+  const cdns = Array.from(new Set(CDN_PATTERNS.filter(([re]) => resourceUrls.some((u) => re.test(u))).map(([, name]) => name)));
+
+  // @media rules in same-origin stylesheets (cross-origin sheets throw on
+  // cssRules — counted as unknown, not as zero).
+  let mediaQueryCount = 0, styleSheetsReadable = 0, styleSheetsTotal = 0;
+  try {
+    Array.from(document.styleSheets).forEach((sheet) => {
+      styleSheetsTotal++;
+      try {
+        const rules = sheet.cssRules;
+        styleSheetsReadable++;
+        Array.from(rules).forEach((r) => { if (r.type === CSSRule.MEDIA_RULE) mediaQueryCount++; });
+      } catch (e) { /* cross-origin */ }
+    });
+  } catch (e) { /* ignore */ }
+
+  // Document compression, from the navigation entry: encoded (wire) vs
+  // decoded body size. Equal sizes on a non-trivial page = no gzip/brotli.
+  let compression = null;
+  try {
+    const nav0 = performance.getEntriesByType('navigation')[0];
+    if (nav0 && nav0.decodedBodySize) {
+      compression = {
+        encodedBodySize: nav0.encodedBodySize || 0,
+        decodedBodySize: nav0.decodedBodySize,
+        compressed: nav0.encodedBodySize > 0 && nav0.encodedBodySize < nav0.decodedBodySize * 0.95,
+      };
+    }
+  } catch (e) { /* ignore */ }
+
+  const hygiene = {
+    deprecatedTags: deprecatedFound,
+    deprecatedTagCount: Object.values(deprecatedFound).reduce((a, b) => a + b, 0),
+    metaRefresh,
+    domSize,
+    unsafeCrossOrigin,
+    textEmails,
+    analytics,
+    cdns,
+    mediaQueries: { count: mediaQueryCount, readable: styleSheetsReadable, total: styleSheetsTotal },
+    compression,
+  };
+
+  // ---------- Trust / freshness / business-context signals ----------
+  // All string-matched from the page itself — heuristic inputs for the AI
+  // Insights tab. Nothing here calls out anywhere.
+  const jsonLdText = (() => { try { return JSON.stringify(jsonLd); } catch (e) { return ''; } })();
+
+  const telLinks = Array.from(document.querySelectorAll('a[href^="tel:"]')).map((a) => (a.getAttribute('href') || '').replace(/^tel:/i, '').trim());
+  const mailtoLinks = Array.from(document.querySelectorAll('a[href^="mailto:"]')).map((a) => (a.getAttribute('href') || '').replace(/^mailto:/i, '').split('?')[0].trim());
+  // Phone pattern in visible text (loose: intl or UK-style groups of digits).
+  const phoneInText = /(?:\+\d{1,3}[\s.-]?)?(?:\(?0\d{2,4}\)?[\s.-]?)\d{3,4}[\s.-]?\d{3,4}/.test(bodyText);
+  const hasPhone = telLinks.length > 0 || /"telephone"/.test(jsonLdText) || phoneInText;
+  const hasEmail = mailtoLinks.length > 0 || /\b[\w.+-]+@[\w-]+\.[a-z]{2,}\b/i.test(bodyText);
+  const hasAddress = !!document.querySelector('address') || /"PostalAddress"|"streetAddress"/.test(jsonLdText) ||
+    /\b[A-Z]{1,2}\d[A-Z\d]?\s*\d[A-Z]{2}\b/.test(bodyText); // UK postcode
+  const hasCompanyNumber = /\b(company\s*(registration\s*)?(no\.?|number)|companies\s+house|registered\s+in\s+(england|scotland|wales))\b/i.test(bodyText);
+  const hasVatNumber = /\bVAT\s*(no\.?|number|reg)/i.test(bodyText);
+  const hasTermsLink = lowerLinks.some((s) => /\bterms\b|terms-of|terms_of/.test(s));
+  const hasReviewSignal = jsonLdTypes.some((t) => /Review|AggregateRating/i.test(t)) || /"aggregateRating"|"reviewRating"/.test(jsonLdText);
+  const SOCIAL_HOSTS = /facebook\.com|instagram\.com|linkedin\.com|x\.com|twitter\.com|youtube\.com|tiktok\.com|pinterest\./i;
+  const socialLinks = Array.from(new Set(
+    anchors.map((a) => a.getAttribute('href') || '').filter((h) => SOCIAL_HOSTS.test(h))
+      .map((h) => { try { return new URL(h, document.baseURI).hostname.replace(/^www\./, ''); } catch (e) { return null; } })
+      .filter(Boolean)
+  ));
+  const hasOpeningHours = /"openingHours|opening\s+hours|business\s+hours/i.test(jsonLdText + ' ' + bodyText.slice(0, 20000));
+
+  // Copyright year: "© 2026", "(c) 2024-2026", "Copyright 2026".
+  let copyrightYear = null;
+  const tail = bodyText.slice(-3000) + ' ' + bodyText.slice(0, 500);
+  const copyMatches = tail.match(/(?:©|\(c\)|copyright)\s*(?:\d{4}\s*[-–]\s*)?(\d{4})/gi);
+  if (copyMatches) {
+    copyMatches.forEach((m) => {
+      const y = parseInt(m.match(/(\d{4})\s*$/)[1], 10);
+      if (y >= 1995 && y <= new Date().getFullYear() + 1 && (!copyrightYear || y > copyrightYear)) copyrightYear = y;
+    });
+  }
+
+  // Latest explicit date on the page: meta published/modified, JSON-LD
+  // dates, or <time datetime> values.
+  let latestDate = null;
+  const dateCandidates = [];
+  const pushDate = (v) => { if (v) dateCandidates.push(v); };
+  pushDate(metaContent('meta[property="article:published_time"]'));
+  pushDate(metaContent('meta[property="article:modified_time"]'));
+  pushDate(metaContent('meta[name="date"]'));
+  document.querySelectorAll('time[datetime]').forEach((t, i) => { if (i < 50) pushDate(t.getAttribute('datetime')); });
+  (jsonLdText.match(/"(?:datePublished|dateModified)"\s*:\s*"([^"]{4,40})"/g) || []).forEach((m) => {
+    pushDate(m.replace(/^.*:\s*"/, '').replace(/"$/, ''));
+  });
+  dateCandidates.forEach((v) => {
+    const d = new Date(v);
+    if (!isNaN(d) && d.getFullYear() >= 1995 && d.getTime() < Date.now() + 86400000 * 366) {
+      if (!latestDate || d > new Date(latestDate)) latestDate = d.toISOString();
+    }
+  });
+
+  // Business context from structured data: name / type / address / area.
+  function findOrgNode(blocks) {
+    let found = null;
+    const visit = (node) => {
+      if (!node || typeof node !== 'object' || found) return;
+      const t = node['@type'];
+      const types = Array.isArray(t) ? t : t ? [t] : [];
+      if (types.some((x) => /Organization|LocalBusiness|Corporation|Store|Service|Restaurant|Hotel|Dentist|Attorney|Physician|Plumber|Electrician|AutoRepair|ProfessionalService/i.test(String(x)))) {
+        found = node;
+        return;
+      }
+      if (Array.isArray(node)) node.forEach(visit);
+      else Object.keys(node).forEach((k) => { if (typeof node[k] === 'object') visit(node[k]); });
+    };
+    (blocks || []).forEach(visit);
+    return found;
+  }
+  const orgNode = findOrgNode(jsonLd);
+  const addrNode = orgNode && typeof orgNode.address === 'object' ? (Array.isArray(orgNode.address) ? orgNode.address[0] : orgNode.address) : null;
+  const businessContext = {
+    siteName: (orgNode && orgNode.name) || ogRaw['og:site_name'] || null,
+    schemaType: orgNode ? (Array.isArray(orgNode['@type']) ? orgNode['@type'].join(', ') : orgNode['@type']) : null,
+    description: (orgNode && typeof orgNode.description === 'string' && orgNode.description.slice(0, 300)) || null,
+    locality: addrNode ? [addrNode.addressLocality, addrNode.addressRegion, addrNode.addressCountry].filter((v) => typeof v === 'string').join(', ') || null : null,
+    telephone: (orgNode && typeof orgNode.telephone === 'string' && orgNode.telephone) || telLinks[0] || null,
+    sameAsCount: orgNode && orgNode.sameAs ? (Array.isArray(orgNode.sameAs) ? orgNode.sameAs.length : 1) : 0,
+  };
+
+  const trustSignals = {
+    hasPhone, hasEmail, hasAddress, hasCompanyNumber, hasVatNumber,
+    hasTermsLink, hasReviewSignal, hasOpeningHours,
+    socialProfiles: socialLinks,
+  };
+  const freshness = { copyrightYear, latestDate, dateCandidateCount: dateCandidates.length };
 
   const hostname = location.hostname;
   const isLocalhost = hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1' ||
@@ -488,7 +706,11 @@ async function scorlyInPageAnalyze() {
       fontSizes: { checked: fontSizeSamplesChecked, small: smallFontCount },
     },
     aiSeo: { hasFaqSchema, hasArticleSchema, semanticLandmarks, hasStructuredData: jsonLd.length > 0, hasMetaDescription: !!descText, hasClearH1: h1Texts.length === 1 },
-    eeat: { hasAuthorByline, hasPublishDate, hasAboutLink, hasContactLink, hasPrivacyLink, hasOrgOrPersonSchema },
+    eeat: { hasAuthorByline, hasPublishDate, hasAboutLink, hasContactLink, hasPrivacyLink, hasOrgOrPersonSchema, aboutMatch, contactMatch, privacyMatch },
+    trustSignals,
+    freshness,
+    businessContext,
+    hygiene,
     analyzedAt: new Date().toISOString(),
   };
 }

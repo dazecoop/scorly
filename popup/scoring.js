@@ -201,6 +201,11 @@ function scorlyComputeScore(data) {
     content.add('imgalt', 'Image alt text', ratio > 0.5 ? 'fail' : 'warn', `${data.images.missingAlt} of ${data.images.total} images missing alt text.`, ratio > 0.5 ? 'high' : 'med');
   }
 
+  if (data.images.distorted !== undefined && data.images.total > 0) {
+    content.add('imgdistorted', 'Image aspect ratio', data.images.distorted === 0 ? 'pass' : 'warn',
+      data.images.distorted === 0 ? 'No stretched or squashed images detected.' : `${data.images.distorted} image(s) rendered at a different aspect ratio than their source — they will look stretched or squashed.`, 'low');
+  }
+
   content.add('links', 'Internal / external links', data.links.total > 0 ? 'pass' : 'warn',
     `${data.links.internal} internal, ${data.links.external} external, ${data.links.nofollow} nofollow.`, 'low');
 
@@ -266,6 +271,31 @@ function scorlyComputeScore(data) {
     if (lc.broken === 0) technical.add('brokenlinks', 'Internal link targets', 'pass', `All ${lc.checked} checked internal links respond OK.`);
     else technical.add('brokenlinks', 'Internal link targets', 'fail', `${lc.broken} of ${lc.checked} checked internal links are broken (4xx/5xx or unreachable).`, 'high');
   }
+  // Hygiene signals only exist on captures made since the hygiene block
+  // landed — old snapshots skip them instead of failing them.
+  if (data.hygiene) {
+    const hy = data.hygiene;
+    if (hy.metaRefresh != null) {
+      technical.add('metarefresh', 'Meta refresh', 'fail', `Page uses a meta refresh ("${String(hy.metaRefresh).slice(0, 60)}") — use a proper 301 redirect instead.`, 'high');
+    } else {
+      technical.add('metarefresh', 'Meta refresh', 'pass', 'No meta refresh redirect.');
+    }
+    if (hy.deprecatedTagCount > 0) {
+      const names = Object.keys(hy.deprecatedTags).map((t) => `<${t}> ×${hy.deprecatedTags[t]}`).join(', ');
+      technical.add('deprecated', 'Deprecated HTML tags', 'warn', `${hy.deprecatedTagCount} deprecated tag(s) found: ${names}.`, 'low');
+    } else {
+      technical.add('deprecated', 'Deprecated HTML tags', 'pass', 'No deprecated HTML tags found.');
+    }
+    technical.add('analytics', 'Analytics', hy.analytics.length ? 'pass' : 'warn',
+      hy.analytics.length ? `Detected: ${hy.analytics.join(', ')}.` : 'No analytics tool detected — you may be flying blind on traffic (or this is deliberate).', 'low');
+  }
+  if (data.notFoundPage) {
+    const nf = data.notFoundPage;
+    if (nf.soft404) technical.add('custom404', 'Custom 404 page', 'fail', `A made-up URL returned HTTP ${nf.status} instead of 404 — search engines may index junk URLs (soft 404).`, 'high');
+    else if (nf.status === 404 && nf.custom) technical.add('custom404', 'Custom 404 page', 'pass', 'Dead URLs return a proper 404 with a real error page.');
+    else if (nf.status === 404) technical.add('custom404', 'Custom 404 page', 'warn', 'Dead URLs return 404, but the error page looks like a bare server default — a custom page keeps lost visitors on the site.', 'low');
+    else technical.add('custom404', 'Custom 404 page', 'warn', `A made-up URL returned HTTP ${nf.status}.`, 'low');
+  }
   if (data.wwwRedirect) {
     const wr = data.wwwRedirect;
     if (wr.unreachable) {
@@ -293,6 +323,12 @@ function scorlyComputeScore(data) {
     if (ratio === 0) mobile.add('taptargets', 'Tap target size', 'pass', `All ${tt.checked} checked tap targets are at least 44×44px.`);
     else mobile.add('taptargets', 'Tap target size', ratio > 0.3 ? 'fail' : 'warn',
       `${tt.small} of ${tt.checked} tap targets (links/buttons) are smaller than the recommended 44×44px minimum.`, ratio > 0.3 ? 'high' : 'med');
+  }
+  if (data.hygiene && data.hygiene.mediaQueries && data.hygiene.mediaQueries.readable > 0) {
+    const mq = data.hygiene.mediaQueries;
+    mobile.add('mediaqueries', 'Responsive CSS (@media)', mq.count > 0 ? 'pass' : 'warn',
+      mq.count > 0 ? `${mq.count} @media rule(s) across ${mq.readable} readable stylesheet(s).`
+        : `No @media rules found in the ${mq.readable} readable stylesheet(s)${mq.total > mq.readable ? ` (${mq.total - mq.readable} cross-origin sheet(s) could not be inspected)` : ''} — layout may not adapt to screen size.`, 'med');
   }
   if (data.mobile && data.mobile.fontSizes && data.mobile.fontSizes.checked > 0) {
     const fs = data.mobile.fontSizes;
@@ -399,6 +435,44 @@ function scorlyComputeScore(data) {
     else perf.add('thirdparty', 'Third-party origins', 'fail', `${tp} third-party origins — connection overhead alone is hurting load time.`, 'med');
   }
 
+  if (data.hygiene) {
+    const hy = data.hygiene;
+    if (hy.domSize <= 1500) perf.add('domsize', 'DOM size', 'pass', `${hy.domSize.toLocaleString()} elements.`);
+    else if (hy.domSize <= 3000) perf.add('domsize', 'DOM size', 'warn', `${hy.domSize.toLocaleString()} elements — large DOMs slow style/layout work (Lighthouse flags >1,500).`, 'low');
+    else perf.add('domsize', 'DOM size', 'fail', `${hy.domSize.toLocaleString()} elements — an excessive DOM makes every interaction and render more expensive.`, 'med');
+
+    if (hy.compression && hy.compression.decodedBodySize > 20000) {
+      const c = hy.compression;
+      if (c.compressed) {
+        const saved = Math.round((1 - c.encodedBodySize / c.decodedBodySize) * 100);
+        perf.add('gzip', 'HTML compression', 'pass', `Document is compressed on the wire (${saved}% smaller than its decoded size).`);
+      } else {
+        perf.add('gzip', 'HTML compression', 'fail', `The HTML document is served uncompressed (${Math.round(c.decodedBodySize / 1024)} KB) — enable gzip or brotli on the server.`, 'med');
+      }
+    }
+
+    const proto = (data.perf.nextHopProtocol || '').toLowerCase();
+    if (proto) {
+      if (proto === 'h2' || proto === 'h3') perf.add('http2', 'HTTP/2+', 'pass', `Served over ${proto.toUpperCase()} — parallel requests without connection overhead.`);
+      else perf.add('http2', 'HTTP/2+', 'warn', `Served over ${proto.toUpperCase()} — HTTP/2 or HTTP/3 would let requests share one connection.`, 'med');
+    }
+  }
+  if (data.assetCheck) {
+    const ac = data.assetCheck;
+    const name = (u) => { try { return new URL(u).pathname.split('/').pop(); } catch (e) { return u; } };
+    if (ac.uncached === 0) perf.add('caching', 'Static asset caching', 'pass', `All ${ac.checked} sampled static assets send caching headers.`);
+    else perf.add('caching', 'Static asset caching', ac.uncached > ac.checked / 2 ? 'fail' : 'warn',
+      `${ac.uncached} of ${ac.checked} sampled assets have no (or disabled) caching headers: ${ac.uncachedList.slice(0, 3).map(name).join(', ')}${ac.uncachedList.length > 3 ? '…' : ''} — repeat visitors re-download them.`, ac.uncached > ac.checked / 2 ? 'med' : 'low');
+    if (ac.codeChecked > 0) {
+      if (ac.unminified === 0) perf.add('minify', 'JS/CSS minification', 'pass', `All ${ac.codeChecked} sampled script/style files look minified.`);
+      else perf.add('minify', 'JS/CSS minification', 'warn',
+        `${ac.unminified} of ${ac.codeChecked} sampled script/style files look unminified: ${ac.unminifiedList.slice(0, 3).map(name).join(', ')}${ac.unminifiedList.length > 3 ? '…' : ''}.`, 'med');
+    }
+  }
+  if (data.hygiene && data.hygiene.cdns && data.hygiene.cdns.length) {
+    perf.add('cdn', 'CDN usage', 'pass', `Assets served via: ${data.hygiene.cdns.join(', ')}.`, 'low');
+  }
+
   const sizeKb = data.perf.transferSize / 1024;
   if (sizeKb <= 1024) perf.add('size', 'Transferred size', 'pass', `${sizeKb.toFixed(0)} KB.`);
   else if (sizeKb <= 3072) perf.add('size', 'Transferred size', 'warn', `${sizeKb.toFixed(0)} KB — on the heavier side.`, 'low');
@@ -414,6 +488,15 @@ function scorlyComputeScore(data) {
   security.add('context', 'Secure context', data.security.isSecureContext ? 'pass' : 'warn',
     data.security.isSecureContext ? 'Page is in a secure origin.' : 'Page is not a secure context (some browser APIs unavailable).', 'low');
   security.add('protocol', 'Protocol', 'pass', data.perf.nextHopProtocol ? data.perf.nextHopProtocol.toUpperCase() : 'Unknown', 'low');
+  if (data.hygiene) {
+    const hy = data.hygiene;
+    security.add('unsafeblank', 'Unsafe cross-origin links', hy.unsafeCrossOrigin === 0 ? 'pass' : 'warn',
+      hy.unsafeCrossOrigin === 0 ? 'All external target="_blank" links carry rel="noopener" or "noreferrer".'
+        : `${hy.unsafeCrossOrigin} external target="_blank" link(s) without rel="noopener"/"noreferrer" — the opened page can access window.opener.`, 'med');
+    security.add('plainemail', 'Plaintext email addresses', hy.textEmails.length === 0 ? 'pass' : 'warn',
+      hy.textEmails.length === 0 ? 'No raw email addresses in the page text for spam bots to harvest.'
+        : `${hy.textEmails.length} email address(es) in plain text (${hy.textEmails.slice(0, 2).join(', ')}${hy.textEmails.length > 2 ? '…' : ''}) — harvestable by spam bots; consider a contact form or obfuscation.`, 'low');
+  }
   if (data.securityHeaders) {
     const sh = data.securityHeaders;
     if (data.security.https) {
@@ -441,6 +524,39 @@ function scorlyComputeScore(data) {
     data.aiSeo.hasMetaDescription ? 'Present — usable as an AI/SERP summary.' : 'Missing meta description.', 'med');
   aiSeo.add('h1clear', 'Single clear H1 topic', data.aiSeo.hasClearH1 ? 'pass' : 'warn',
     data.aiSeo.hasClearH1 ? 'Exactly one H1 defines the page topic.' : 'Page topic is not clearly defined by a single H1.', 'low');
+  // AI crawler access & llms.txt only exist on captures made since the
+  // origin-level AI checks landed — old snapshots simply skip them.
+  if (data.aiBotAccess) {
+    const answerBots = data.aiBotAccess.filter((b) => !/Common Crawl/.test(b.engine));
+    const blocked = answerBots.filter((b) => !b.allowed);
+    if (blocked.length === 0) {
+      aiSeo.add('aicrawlers', 'AI crawler access', 'pass', 'robots.txt does not block any major AI crawler (GPTBot, ClaudeBot, PerplexityBot, Google-Extended…).');
+    } else if (blocked.length < answerBots.length) {
+      aiSeo.add('aicrawlers', 'AI crawler access', 'warn', `robots.txt blocks ${blocked.map((b) => b.bot).join(', ')} — this page can't be read or cited by ${blocked.map((b) => b.engine).join(', ')}.`, 'med');
+    } else {
+      aiSeo.add('aicrawlers', 'AI crawler access', 'fail', 'robots.txt blocks all major AI crawlers — the page is invisible to AI answer engines.', 'high');
+    }
+  }
+  if (data.llmsTxt !== undefined) {
+    aiSeo.add('llmstxt', 'llms.txt', data.llmsTxt ? 'pass' : 'warn',
+      data.llmsTxt ? 'llms.txt found at site root — gives AI systems a curated guide to the site.' : 'No llms.txt at site root. An emerging (optional) convention that gives AI systems a curated guide to your content.', 'low');
+  }
+  if (data.freshness) {
+    const f = data.freshness;
+    const now = new Date();
+    const latestMs = f.latestDate ? new Date(f.latestDate).getTime() : null;
+    const monthsOld = latestMs ? (now.getTime() - latestMs) / (86400000 * 30.4) : null;
+    const copyrightCurrent = f.copyrightYear && f.copyrightYear >= now.getFullYear() - 1;
+    if (monthsOld != null && monthsOld <= 18) {
+      aiSeo.add('freshness', 'Content freshness signals', 'pass', `Most recent dated signal is ${monthsOld < 1 ? 'less than a month' : Math.round(monthsOld) + ' month(s)'} old — reads as actively maintained.`);
+    } else if (monthsOld != null) {
+      aiSeo.add('freshness', 'Content freshness signals', 'warn', `Most recent dated signal is ≈${Math.round(monthsOld)} months old — may read as stale to AI systems weighing recency.`, 'med');
+    } else if (copyrightCurrent) {
+      aiSeo.add('freshness', 'Content freshness signals', 'pass', `No explicit content dates, but a current copyright notice (${f.copyrightYear}) signals the site is maintained.`, 'low');
+    } else {
+      aiSeo.add('freshness', 'Content freshness signals', 'warn', 'No dates or current copyright notice found — nothing on the page signals it is up to date.', 'med');
+    }
+  }
 
   // ===================== E-E-A-T (heuristic) =====================
   const eeat = makeCategory();
@@ -450,15 +566,37 @@ function scorlyComputeScore(data) {
     data.eeat.hasPublishDate ? 'Publish/modified date found.' : 'No publish or last-updated date detected.', 'med');
   eeat.add('org', 'Organization / Person schema', data.eeat.hasOrgOrPersonSchema ? 'pass' : 'warn',
     data.eeat.hasOrgOrPersonSchema ? 'Organization or Person schema present.' : 'No Organization/Person schema found.', 'low');
-  eeat.add('about', 'About page linked', data.eeat.hasAboutLink ? 'pass' : 'warn', data.eeat.hasAboutLink ? 'Found a link to an About page.' : 'No About page link found.', 'low');
-  eeat.add('contact', 'Contact page linked', data.eeat.hasContactLink ? 'pass' : 'warn', data.eeat.hasContactLink ? 'Found a link to a Contact page.' : 'No Contact page link found.', 'low');
-  eeat.add('privacy', 'Privacy policy linked', data.eeat.hasPrivacyLink ? 'pass' : 'warn', data.eeat.hasPrivacyLink ? 'Found a link to a Privacy Policy.' : 'No Privacy Policy link found.', 'low');
+  // These are name-matching heuristics: they scan every link's URL and
+  // anchor text on THIS page for common names of the page type. The details
+  // name the matched term (pass) or the terms searched for (fail), so a
+  // miss on an unusually-named page is explainable rather than mysterious.
+  const matchNote = (match) => match && typeof match === 'string' ? ` (matched "${match}" in a link)` : '';
+  eeat.add('about', 'About page linked', data.eeat.hasAboutLink ? 'pass' : 'warn',
+    data.eeat.hasAboutLink ? `Found a link to an About page${matchNote(data.eeat.aboutMatch)}.`
+      : 'No link on this page matches "about", "our story", "who we are", "our team", "company" or "mission" (checked in link URLs and anchor text). If your About page uses a different name, this check can’t see it — but neither can a crawler guess it.', 'low');
+  eeat.add('contact', 'Contact page linked', data.eeat.hasContactLink ? 'pass' : 'warn',
+    data.eeat.hasContactLink ? `Found a link to a Contact page${matchNote(data.eeat.contactMatch)}.`
+      : 'No link on this page matches "contact", "get in touch", "reach us", "support" or "help" (checked in link URLs and anchor text). If your contact route uses a different name, consider also linking it under one of these common names.', 'low');
+  eeat.add('privacy', 'Privacy policy linked', data.eeat.hasPrivacyLink ? 'pass' : 'warn',
+    data.eeat.hasPrivacyLink ? `Found a link to a Privacy Policy${matchNote(data.eeat.privacyMatch)}.`
+      : 'No link on this page matches "privacy" or "data protection" (checked in link URLs and anchor text).', 'low');
   eeat.add('https', 'Trust signal: HTTPS', (data.isLocalhost || data.security.https) ? 'pass' : 'fail',
     data.isLocalhost ? 'Localhost — skipped.' : (data.security.https ? 'Secure connection.' : 'Not served over HTTPS.'), 'high');
 
   const categories = { technical, content, perf, schema, security, mobile, aiSeo, eeat };
   const categoryScores = {};
   Object.keys(categories).forEach((k) => { categoryScores[k] = categories[k].score(); });
+
+  // "AI Visibility" is the one AI-related number shown everywhere — the
+  // Overview bar, exports, compare, and the AI Insights tab header. It
+  // replaces the plain pass/fail ratio of the aiSeo checklist (computed
+  // above) with the broader formula below, which also weighs E-E-A-T and
+  // freshness — the AI SEO checks still run and still show in detail (on
+  // the AI Insights tab), they just no longer produce a second, disagreeing
+  // score. Must run after categoryScores.eeat exists (the formula uses it)
+  // and before the overall-score weighting below (which should weigh this
+  // same number, not the superseded checklist ratio).
+  categoryScores.aiSeo = scorlyComputeAiVisibility(data, categoryScores);
 
   const WEIGHTS = { technical: 0.20, content: 0.20, perf: 0.10, schema: 0.10, security: 0.15, mobile: 0.10, aiSeo: 0.075, eeat: 0.075 };
   let overallScore = 0;
@@ -479,6 +617,7 @@ function scorlyComputeScore(data) {
   return {
     overallScore,
     score: overallScore, // alias for backwards-compat callers
+    aiVisibility: categoryScores.aiSeo,
     categoryScores,
     categories: {
       technical: technical.checks, content: content.checks, perf: perf.checks,
@@ -487,5 +626,179 @@ function scorlyComputeScore(data) {
     },
     allChecks,
     counts,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// AI Insights (all local heuristics — no AI, no network)
+// ---------------------------------------------------------------------------
+// Approximates the "AI Insights" sections of hosted SEO tools from signals
+// already captured on the page: who the site is, how trustworthy and fresh
+// its content looks to an AI answer engine, and what to improve. Every value
+// is rule-based and explainable; nothing here is generated or uploaded.
+
+// How visible this page can be to AI answer engines: can their crawlers read
+// it, can they parse it (structure), can they trust it (E-E-A-T + trust
+// signals), and does it look current. 0–100.
+function scorlyComputeAiVisibility(data, categoryScores) {
+  let score = 0;
+
+  // Access (30): blocked crawlers cap everything else.
+  if (data.aiBotAccess) {
+    const answerBots = data.aiBotAccess.filter((b) => !/Common Crawl/.test(b.engine));
+    const allowed = answerBots.filter((b) => b.allowed).length;
+    score += Math.round((allowed / answerBots.length) * 30);
+  } else {
+    score += 24; // unknown (old snapshot) — assume the common case, mostly open
+  }
+
+  // Machine-readability (30): structured data, clear topic, semantics.
+  const ai = data.aiSeo || {};
+  score += ai.hasStructuredData ? 10 : 0;
+  score += (ai.hasFaqSchema || ai.hasArticleSchema) ? 5 : 0;
+  score += ai.hasClearH1 ? 5 : 0;
+  score += ai.hasMetaDescription ? 4 : 0;
+  score += Math.min(6, Math.round((ai.semanticLandmarks || 0) * 1.2));
+
+  // Trust (25): scaled from the E-E-A-T category score + hard trust signals.
+  score += Math.round(((categoryScores && categoryScores.eeat) || 0) * 0.15);
+  const ts = data.trustSignals;
+  if (ts) {
+    score += (ts.hasPhone || ts.hasEmail) ? 3 : 0;
+    score += ts.hasAddress ? 3 : 0;
+    score += ts.hasReviewSignal ? 2 : 0;
+    score += (ts.socialProfiles && ts.socialProfiles.length) ? 2 : 0;
+  } else {
+    score += 5; // old snapshot — neutral middle
+  }
+
+  // Freshness (15).
+  if (data.freshness) {
+    const f = data.freshness;
+    const latestMs = f.latestDate ? new Date(f.latestDate).getTime() : null;
+    const monthsOld = latestMs ? (Date.now() - latestMs) / (86400000 * 30.4) : null;
+    if (monthsOld != null && monthsOld <= 6) score += 15;
+    else if (monthsOld != null && monthsOld <= 18) score += 11;
+    else if (f.copyrightYear && f.copyrightYear >= new Date().getFullYear() - 1) score += 8;
+    else if (monthsOld != null) score += 4;
+  } else {
+    score += 8;
+  }
+
+  return Math.max(0, Math.min(100, score));
+}
+
+function scorlyComputeAiInsights(data, scoreResult) {
+  const ts = data.trustSignals || null;
+  const fr = data.freshness || null;
+  const bc = data.businessContext || null;
+  const eeat = data.eeat || {};
+  const ai = data.aiSeo || {};
+  const content = data.content || {};
+  const now = new Date();
+
+  // ---------- Domain / business context (detected, not generated) ----------
+  const businessContext = {
+    siteName: (bc && bc.siteName) || (data.og && data.og.siteName) || data.hostname || null,
+    schemaType: bc ? bc.schemaType : null,
+    about: (bc && bc.description) || (data.metaDescription && data.metaDescription.text) || data.firstParagraph || null,
+    locality: bc ? bc.locality : null,
+    telephone: bc ? bc.telephone : null,
+    socialProfiles: ts ? ts.socialProfiles || [] : [],
+    captured: !!bc,
+  };
+
+  // ---------- Strengths / weaknesses ----------
+  const strengths = [];
+  const weaknesses = [];
+  const add = (list, label, detail) => list.push({ label, detail });
+
+  if (ai.hasClearH1 && data.metaDescription && data.metaDescription.length) add(strengths, 'Clear page topic', 'One H1 plus a meta description define what this page is about.');
+  if (ai.hasStructuredData) add(strengths, 'Machine-readable markup', `Structured data present (${(data.jsonLdTypes || []).slice(0, 4).join(', ') || 'JSON-LD'}).`);
+  if (ts && (ts.hasPhone || ts.hasEmail) && ts.hasAddress) add(strengths, 'Visible trust signals', 'Real-world contact details (phone/email and an address) are on the page.');
+  if (businessContext.locality) add(strengths, 'Strong local positioning', `Location is explicit in structured data (${businessContext.locality}).`);
+  if (ts && ts.hasReviewSignal) add(strengths, 'Social proof', 'Review or rating markup found.');
+  if (content.readability >= 60) add(strengths, 'Easy to read', `Flesch reading ease ≈ ${content.readability}/100.`);
+  if (content.wordCount >= 600) add(strengths, 'Substantial content', `${content.wordCount} words of copy for engines to work with.`);
+  if (eeat.hasAuthorByline && eeat.hasPublishDate) add(strengths, 'Clear authorship', 'Author and publish date are both stated.');
+
+  if (content.wordCount > 0 && content.wordCount < 400) add(weaknesses, 'Thin content', `Only ${content.wordCount} words — little depth for engines or AI to cite.`);
+  if (!ai.hasFaqSchema) add(weaknesses, 'No FAQ markup', 'FAQ schema makes answers directly liftable by AI assistants and rich results.');
+  if (!eeat.hasAuthorByline) add(weaknesses, 'No visible author', 'Nothing says who is behind the content.');
+  if (!eeat.hasPublishDate && !(fr && fr.latestDate)) add(weaknesses, 'Undated content', 'No publish or updated date anywhere on the page.');
+  if (ts && !ts.hasTermsLink && !eeat.hasPrivacyLink) add(weaknesses, 'No policy pages linked', 'Privacy/terms links are a baseline credibility signal.');
+  if (!ai.hasStructuredData) add(weaknesses, 'No structured data', 'AI systems have to guess at the page’s meaning.');
+  if (content.readability > 0 && content.readability < 30) add(weaknesses, 'Hard to read', `Flesch reading ease ≈ ${content.readability}/100.`);
+  if (data.aiBotAccess && data.aiBotAccess.some((b) => !b.allowed && !/Common Crawl/.test(b.engine))) {
+    add(weaknesses, 'AI crawlers blocked', `robots.txt blocks ${data.aiBotAccess.filter((b) => !b.allowed).map((b) => b.bot).join(', ')}.`);
+  }
+
+  // ---------- Content trust score ----------
+  function pctOf(items) {
+    const got = items.filter(Boolean).length;
+    return Math.round((got / items.length) * 100);
+  }
+  const trust = ts ? (() => {
+    const identity = pctOf([ts.hasPhone, ts.hasEmail, ts.hasAddress, ts.hasCompanyNumber || ts.hasVatNumber]);
+    const transparency = pctOf([eeat.hasAboutLink, eeat.hasContactLink, eeat.hasPrivacyLink, ts.hasTermsLink]);
+    const evidence = pctOf([eeat.hasOrgOrPersonSchema, ts.hasReviewSignal, eeat.hasAuthorByline, (ts.socialProfiles || []).length > 0]);
+    const score = Math.round(identity * 0.4 + transparency * 0.3 + evidence * 0.3);
+    return {
+      score,
+      subs: [
+        { label: 'Identity & contact', score: identity, detail: 'Phone, email, address, company/VAT number' },
+        { label: 'Transparency', score: transparency, detail: 'About, contact, privacy and terms pages' },
+        { label: 'Evidence & proof', score: evidence, detail: 'Org/Person schema, reviews, authorship, social profiles' },
+      ],
+    };
+  })() : null;
+
+  // ---------- Content freshness ----------
+  const freshness = fr ? (() => {
+    const positives = [];
+    const negatives = [];
+    let score = 50;
+    const latestMs = fr.latestDate ? new Date(fr.latestDate).getTime() : null;
+    const monthsOld = latestMs ? (Date.now() - latestMs) / (86400000 * 30.4) : null;
+    if (monthsOld != null) {
+      const when = new Date(fr.latestDate).toISOString().slice(0, 10);
+      if (monthsOld <= 6) { score += 35; positives.push(`Dated content signal from ${when}`); }
+      else if (monthsOld <= 18) { score += 20; positives.push(`Most recent dated signal: ${when}`); }
+      else { score -= 20; negatives.push(`Newest dated signal is from ${when} (≈${Math.round(monthsOld)} months ago)`); }
+    } else {
+      negatives.push('No explicit content dates (datePublished, <time>, article meta)');
+    }
+    if (fr.copyrightYear) {
+      if (fr.copyrightYear >= now.getFullYear() - 1) { score += 15; positives.push(`Current copyright notice (${fr.copyrightYear})`); }
+      else { score -= 15; negatives.push(`Stale copyright notice (${fr.copyrightYear})`); }
+    } else {
+      negatives.push('No copyright year found');
+    }
+    if (ts && ts.hasOpeningHours) { score += 5; positives.push('Business hours listed'); }
+    if (ts && (ts.hasPhone || ts.hasEmail)) { positives.push('Live contact details present'); }
+    return { score: Math.max(0, Math.min(100, score)), positives, negatives };
+  })() : null;
+
+  // ---------- Opportunities (quick wins, rule-based) ----------
+  const opportunities = [];
+  if (!ai.hasFaqSchema) opportunities.push('Add an FAQ section with FAQPage schema — the questions people actually ask, each with a 2–3 sentence answer. This is the most direct route into AI answers and rich results.');
+  if (content.wordCount > 0 && content.wordCount < 600) opportunities.push('Deepen the page copy: expand each service or topic into its own paragraph with specifics (materials, process, turnaround, pricing signals) rather than one-line claims.');
+  if (ts && !ts.hasReviewSignal) opportunities.push('Surface reviews or testimonials with Review/AggregateRating markup so ratings can appear in search results.');
+  if (!eeat.hasAuthorByline) opportunities.push('Add a short author or team byline (with a person/company name) — AI systems weigh identifiable sources higher.');
+  if (!(fr && fr.latestDate)) opportunities.push('Show a visible "last updated" date (with a <time datetime> tag or dateModified in schema) so both users and crawlers can see the content is current.');
+  if (ts && !ts.hasTermsLink && !eeat.hasPrivacyLink) opportunities.push('Link privacy and terms pages in the footer — a baseline trust signal for users, search engines and AI alike.');
+  if (data.llmsTxt === false) opportunities.push('Consider publishing an llms.txt at the site root — an emerging convention that hands AI systems a curated map of your best content.');
+  if (!eeat.hasOrgOrPersonSchema) opportunities.push('Add Organization schema (name, logo, address, sameAs social links) so engines can connect this page to a real entity.');
+  if ((data.jsonLdTypes || []).every((t) => !/BreadcrumbList/i.test(t)) && data.jsonLdTypes) opportunities.push('Add BreadcrumbList schema so results show your site structure instead of a bare URL.');
+
+  return {
+    aiVisibility: scoreResult ? scoreResult.aiVisibility : scorlyComputeAiVisibility(data, scoreResult && scoreResult.categoryScores),
+    businessContext,
+    strengths,
+    weaknesses,
+    trust,
+    freshness,
+    opportunities: opportunities.slice(0, 6),
+    captured: { trustSignals: !!ts, freshness: !!fr, businessContext: !!bc, aiBotAccess: !!data.aiBotAccess },
   };
 }

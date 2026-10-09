@@ -110,10 +110,12 @@ html, body { height: 600px; }
   background: var(--surface);
   overflow-x: auto;
   flex-shrink: 0;
-  scrollbar-width: thin;
+  /* No visible scrollbar: on Windows even a "thin" one eats a big slice of
+     the strip. Scrolling still works via trackpad/wheel (popup.js converts
+     vertical wheel to horizontal) and tabs scroll into view on click. */
+  scrollbar-width: none;
 }
-.tabs::-webkit-scrollbar { height: 4px; }
-.tabs::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+.tabs::-webkit-scrollbar { display: none; }
 .tab-btn {
   display: flex;
   align-items: center;
@@ -354,6 +356,31 @@ html, body { height: 600px; }
 .image-alt.alt-missing { color: var(--fail); }
 .image-alt.alt-ok { color: var(--pass); }
 .image-src { font-size: 10.5px; color: var(--text-muted); word-break: break-all; }
+.image-facts { font-size: 10.5px; color: var(--text-muted); }
+.img-flag { font-size: 9px; font-weight: 700; padding: 1px 5px; border-radius: 4px; white-space: nowrap; }
+.img-flag.flag-warn { background: var(--warn-bg); color: var(--warn); }
+
+/* ---- Perf waterfall ---- */
+.req-list { display: flex; flex-direction: column; gap: 3px; margin-bottom: 10px; }
+.req-row { display: flex; gap: 8px; align-items: baseline; font-size: 11px; padding: 3px 6px; border-radius: 6px; background: var(--surface); border: 1px solid var(--border); }
+.req-type { flex-shrink: 0; width: 62px; font-size: 9.5px; font-weight: 700; text-transform: uppercase; color: var(--text-muted); }
+.req-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.req-blocking { flex-shrink: 0; font-size: 9px; font-weight: 700; background: var(--warn-bg); color: var(--warn); padding: 1px 5px; border-radius: 4px; }
+.req-size { flex-shrink: 0; font-weight: 600; font-variant-numeric: tabular-nums; }
+.req-time { flex-shrink: 0; width: 52px; text-align: right; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+
+/* ---- About tab ---- */
+.about-head { display: flex; gap: 12px; align-items: center; margin-bottom: 16px; }
+.about-name { font-size: 16px; font-weight: 800; }
+.about-version { font-size: 11px; font-weight: 600; color: var(--text-muted); margin-left: 4px; }
+.about-tag { font-size: 11.5px; color: var(--text-muted); margin-top: 2px; }
+.about-list { display: flex; flex-direction: column; gap: 8px; }
+.about-row { display: flex; gap: 10px; align-items: center; padding: 10px 12px; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; text-decoration: none; color: var(--text); }
+.about-row:hover { border-color: var(--accent); }
+.about-row .tab-icon { width: 18px; height: 18px; color: var(--accent); }
+.about-row-title { font-size: 12.5px; font-weight: 600; }
+.about-row-sub { font-size: 11px; color: var(--text-muted); }
+.about-license { margin-top: 14px; font-size: 11px; color: var(--text-muted); }
 
 /* ---- Tech table ---- */
 .check-table { width: 100%; border-collapse: collapse; margin-bottom: 14px; }

@@ -40,13 +40,21 @@ function buildExportPayload(data, scoreResult) {
       favicon: data.favicon, hasDoctype: data.hasDoctype,
     },
     headings: data.headings,
-    images: { total: data.images.total, missingAlt: data.images.missingAlt },
+    images: {
+      total: data.images.total, missingAlt: data.images.missingAlt,
+      oversized: data.images.oversized, legacyFormat: data.images.legacyFormat,
+      missingDimensions: data.images.missingDimensions, lazyLoaded: data.images.lazyLoaded,
+      list: data.images.list,
+    },
     links: { internal: data.links.internal, external: data.links.external, nofollow: data.links.nofollow, missingAnchorText: data.links.missingAnchorText },
+    linkCheck: data.linkCheck || null,
+    structuredDataIssues: data.jsonLd && data.jsonLd.length ? scorlyValidateStructuredData(data.jsonLd) : [],
     content: data.content,
     og: data.og,
     twitter: data.twitter,
     jsonLdTypes: data.jsonLdTypes,
     perf: data.perf,
+    resources: data.resources,
     security: data.security,
     robotsTxt: data.robotsTxt,
     sitemapXml: data.sitemapXml,
@@ -62,8 +70,10 @@ function toCsv(data, scoreResult) {
   Object.keys(scoreResult.categoryScores).forEach((k) => rows.push([CATEGORY_LABELS[k] + ' Score', scoreResult.categoryScores[k]]));
   rows.push(['Title', data.title.text]);
   rows.push(['Title Length', data.title.length]);
+  rows.push(['Title Pixel Width', data.title.pixels]);
   rows.push(['Meta Description', data.metaDescription.text]);
   rows.push(['Meta Description Length', data.metaDescription.length]);
+  rows.push(['Meta Description Pixel Width', data.metaDescription.pixels]);
   rows.push(['Canonical', data.canonical || '']);
   rows.push(['Word Count', data.content.wordCount]);
   rows.push(['Readability', data.content.readability]);
@@ -72,12 +82,21 @@ function toCsv(data, scoreResult) {
   rows.push(['Images Missing Alt', data.images.missingAlt]);
   rows.push(['Internal Links', data.links.internal]);
   rows.push(['External Links', data.links.external]);
+  if (data.linkCheck) {
+    rows.push(['Internal Links Checked', data.linkCheck.checked]);
+    rows.push(['Broken Internal Links', data.linkCheck.broken]);
+    rows.push(['Redirected Internal Links', data.linkCheck.redirected]);
+  }
   rows.push(['Has Open Graph', Object.keys(data.og.raw || {}).length > 0]);
   rows.push(['Has Twitter Card', Object.keys(data.twitter.raw || {}).length > 0]);
   rows.push(['Structured Data Types', data.jsonLdTypes.join('; ')]);
+  rows.push(['TTFB (ms)', data.perf.ttfb]);
+  rows.push(['FCP (ms)', data.perf.fcp]);
   rows.push(['LCP (ms)', data.perf.lcp]);
   rows.push(['CLS', data.perf.cls]);
-  rows.push(['TTFB (ms)', data.perf.ttfb]);
+  rows.push(['TBT approx (ms)', data.perf.tbt]);
+  rows.push(['INP (ms)', data.perf.inp]);
+  rows.push(['Render-Blocking Resources', data.perf.renderBlockingCount]);
   rows.push(['Requests', data.perf.requestCount]);
   rows.push(['Transferred Size (bytes)', data.perf.transferSize]);
   rows.push(['HTTPS', data.security.https]);
@@ -86,6 +105,12 @@ function toCsv(data, scoreResult) {
   rows.push([]);
   rows.push(['Check', 'Category', 'Status', 'Severity', 'Detail']);
   scoreResult.allChecks.forEach((c) => rows.push([c.label, CATEGORY_LABELS[c.category] || c.category, c.status, c.severity, c.detail]));
+
+  if (data.resources && data.resources.length) {
+    rows.push([]);
+    rows.push(['Request URL', 'Type', 'Transferred (bytes)', 'Duration (ms)', 'Render-Blocking']);
+    data.resources.forEach((r) => rows.push([r.url, r.type, r.transferSize, r.duration, r.renderBlocking === null ? '' : r.renderBlocking]));
+  }
 
   return rows.map((r) => r.map(csvEscape).join(',')).join('\r\n');
 }
@@ -122,6 +147,9 @@ function toMarkdown(data, scoreResult) {
   lines.push(`- **Links**: ${data.links.internal} internal, ${data.links.external} external, ${data.links.nofollow} nofollow`);
   lines.push(`- **Images**: ${data.images.total} total, ${data.images.missingAlt} missing alt text`);
   lines.push(`- **Structured data**: ${data.jsonLdTypes.length ? data.jsonLdTypes.join(', ') : '_none_'}`);
+  const p = data.perf;
+  const msOr = (v) => (v != null ? v + 'ms' : 'n/a');
+  lines.push(`- **Web vitals**: TTFB ${msOr(p.ttfb)}, FCP ${msOr(p.fcp)}, LCP ${msOr(p.lcp)}, CLS ${p.cls != null ? p.cls : 'n/a'}, TBT≈ ${msOr(p.tbt)}, INP ${msOr(p.inp)}`);
   lines.push('');
 
   // Issues first — a report is read for what needs fixing.

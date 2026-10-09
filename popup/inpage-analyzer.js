@@ -5,7 +5,7 @@ async function scorlyInPageAnalyze() {
   // PerformanceObserver that explicitly asks for `buffered: true` — plain
   // getEntriesByType() returns nothing for them. Delivery of buffered entries
   // is async, so wait one tick (or the real-time callback, whichever is first).
-  function collectBuffered(type, timeoutMs) {
+  function collectBuffered(type, timeoutMs, extraOpts) {
     return new Promise((resolve) => {
       if (typeof PerformanceObserver === 'undefined' ||
           !PerformanceObserver.supportedEntryTypes ||
@@ -17,7 +17,7 @@ async function scorlyInPageAnalyze() {
       let observer;
       try {
         observer = new PerformanceObserver((list) => { entries = entries.concat(list.getEntries()); });
-        observer.observe({ type, buffered: true });
+        observer.observe(Object.assign({ type, buffered: true }, extraOpts || {}));
       } catch (e) {
         resolve([]);
         return;
@@ -76,23 +76,58 @@ async function scorlyInPageAnalyze() {
   document.querySelectorAll('h1,h2,h3,h4,h5,h6').forEach((h) => {
     const level = Number(h.tagName.substring(1));
     headingCounts['h' + level]++;
-    headingList.push({ level, text: textOf(h).slice(0, 200) });
+    headingList.push({ level, text: textOf(h).slice(0, 500) });
   });
   const h1Texts = headingList.filter((h) => h.level === 1).map((h) => h.text);
 
   // ---------- Images ----------
+  function imageFormat(url) {
+    if (!url) return null;
+    if (/^data:image\/([a-z0-9+.-]+)/i.test(url)) return RegExp.$1.toLowerCase().replace('jpeg', 'jpg');
+    try {
+      const m = new URL(url, document.baseURI).pathname.match(/\.([a-z0-9]{2,5})$/i);
+      if (!m) return null;
+      const ext = m[1].toLowerCase();
+      return ext === 'jpeg' ? 'jpg' : ext;
+    } catch (e) { return null; }
+  }
   const imgEls = Array.from(document.querySelectorAll('img'));
   const imageList = imgEls.slice(0, 200).map((img) => {
     const alt = img.getAttribute('alt');
+    const src = abs(img.currentSrc || img.getAttribute('src') || '');
+    const rect = img.getBoundingClientRect();
+    const renderedW = Math.round(rect.width);
+    const renderedH = Math.round(rect.height);
+    const naturalW = img.naturalWidth || 0;
+    const naturalH = img.naturalHeight || 0;
+    // Oversized = intrinsic pixels are ≥2× what the layout slot needs even on
+    // a 2× (retina) screen — the classic "shipping a 2400px hero into a 600px
+    // column" waste. Only judged once both sizes are known and non-trivial.
+    const oversized = !!(naturalW && renderedW > 20 &&
+      naturalW >= renderedW * 2 * Math.min(2, window.devicePixelRatio || 1));
     return {
-      src: abs(img.getAttribute('src') || img.currentSrc || ''),
+      src,
       alt: alt || '',
       missing: !img.hasAttribute('alt') || img.getAttribute('alt').trim() === '',
+      naturalW,
+      naturalH,
+      renderedW,
+      renderedH,
+      format: imageFormat(src),
+      loading: img.getAttribute('loading') || null,
+      fetchpriority: img.getAttribute('fetchpriority') || null,
+      hasExplicitSize: img.hasAttribute('width') && img.hasAttribute('height'),
+      oversized,
     };
   });
+  const LEGACY_FORMATS = ['png', 'jpg', 'gif', 'bmp'];
   const images = {
     total: imgEls.length,
     missingAlt: imageList.filter((i) => i.missing).length + Math.max(0, imgEls.length - imageList.length),
+    missingDimensions: imageList.filter((i) => !i.hasExplicitSize).length,
+    oversized: imageList.filter((i) => i.oversized).length,
+    legacyFormat: imageList.filter((i) => i.format && LEGACY_FORMATS.includes(i.format)).length,
+    lazyLoaded: imageList.filter((i) => i.loading === 'lazy').length,
     list: imageList,
   };
 
@@ -175,14 +210,19 @@ async function scorlyInPageAnalyze() {
   // single wall of text.
   const TEXT_BLOCK_SELECTOR = 'h1,h2,h3,h4,h5,h6,p,li,td,th,blockquote,figcaption,button,label,summary,dt,dd';
   const textBlocks = [];
+  // Per-block cap is generous (so copy can be verified verbatim) but a total
+  // character budget keeps a pathological page from blowing the storage quota.
+  let textBudget = 400000;
   document.querySelectorAll(TEXT_BLOCK_SELECTOR).forEach((node) => {
-    if (textBlocks.length >= 800) return;
+    if (textBlocks.length >= 800 || textBudget <= 0) return;
     // Skip wrappers whose text comes entirely from a nested block we already
     // captured (e.g. <li><p>…</p></li>) to avoid duplicate diff rows.
     if (node.querySelector(TEXT_BLOCK_SELECTOR)) return;
     const text = textOf(node);
     if (!text) return;
-    textBlocks.push({ tag: node.tagName.toLowerCase(), text: text.slice(0, 600) });
+    const kept = text.slice(0, Math.min(4000, textBudget));
+    textBudget -= kept.length;
+    textBlocks.push({ tag: node.tagName.toLowerCase(), text: kept });
   });
 
   // ---------- Open Graph / Twitter ----------
@@ -233,30 +273,76 @@ async function scorlyInPageAnalyze() {
 
   // ---------- Performance ----------
   let ttfb = null, transferSize = 0, requestCount = 0, nextHopProtocol = null;
+  const resourceList = [];
+  let renderBlockingCount = null;
   try {
     const nav = performance.getEntriesByType('navigation')[0];
     if (nav) {
       ttfb = Math.round(nav.responseStart - nav.requestStart);
       nextHopProtocol = nav.nextHopProtocol || null;
       transferSize += nav.transferSize || 0;
+      resourceList.push({
+        url: nav.name,
+        type: 'document',
+        transferSize: nav.transferSize || 0,
+        duration: Math.round(nav.duration) || null,
+        startTime: 0,
+        renderBlocking: true,
+      });
     }
     const resources = performance.getEntriesByType('resource');
     requestCount = resources.length + (nav ? 1 : 0);
-    resources.forEach((r) => { transferSize += r.transferSize || 0; });
+    // renderBlockingStatus is Chromium-only (107+); null means "unknown", not
+    // "not blocking", so Firefox renders no blocking flags rather than wrong ones.
+    const hasBlockingInfo = resources.length > 0 && 'renderBlockingStatus' in resources[0];
+    resources.forEach((r) => {
+      transferSize += r.transferSize || 0;
+      if (resourceList.length >= 400) return;
+      resourceList.push({
+        url: r.name,
+        type: r.initiatorType || 'other',
+        transferSize: r.transferSize || 0,
+        duration: Math.round(r.duration),
+        startTime: Math.round(r.startTime),
+        renderBlocking: hasBlockingInfo ? r.renderBlockingStatus === 'blocking' : null,
+      });
+    });
+    if (hasBlockingInfo) renderBlockingCount = resourceList.filter((r) => r.renderBlocking && r.type !== 'document').length;
   } catch (e) { /* performance API unavailable */ }
 
   // Real Web Vitals, read from the browser's own performance entry buffer
   // (no network calls — just local Performance Observer APIs).
-  let lcp = null, cls = null;
+  let lcp = null, cls = null, fcp = null, tbt = null, inp = null;
   try {
-    const [lcpEntries, shiftEntries] = await Promise.all([
+    const [lcpEntries, shiftEntries, paintEntries, longTasks, eventEntries] = await Promise.all([
       collectBuffered('largest-contentful-paint', 150),
       collectBuffered('layout-shift', 150),
+      collectBuffered('paint', 150),
+      collectBuffered('longtask', 150),
+      // Event Timing: buffered interaction latencies. durationThreshold 16 is
+      // the API minimum — anything slower than one frame is kept.
+      collectBuffered('event', 150, { durationThreshold: 16 }),
     ]);
     if (lcpEntries.length) lcp = Math.round(lcpEntries[lcpEntries.length - 1].startTime);
     if (shiftEntries.length || PerformanceObserver.supportedEntryTypes.includes('layout-shift')) {
       cls = Math.round(shiftEntries.reduce((sum, e) => sum + (e.hadRecentInput ? 0 : e.value), 0) * 1000) / 1000;
     }
+    const fcpEntry = paintEntries.find((p) => p.name === 'first-contentful-paint');
+    if (fcpEntry) fcp = Math.round(fcpEntry.startTime);
+    // TBT approximation: sum of main-thread blocking time (long task duration
+    // beyond 50ms) after FCP. Lab TBT proper stops at TTI; without a TTI
+    // estimate this slightly over-counts, so it is labelled "approx".
+    // Chromium-only — Firefox has no longtask entries, leaving this null.
+    if (longTasks.length || (PerformanceObserver.supportedEntryTypes || []).includes('longtask')) {
+      tbt = Math.round(longTasks.reduce((sum, t) => {
+        if (fcp != null && t.startTime + t.duration <= fcp) return sum;
+        return sum + Math.max(0, t.duration - 50);
+      }, 0));
+    }
+    // INP needs real interactions: the worst buffered interaction latency so
+    // far. Null on a fresh load where the user has not interacted yet.
+    const interactions = eventEntries.filter((e) => e.interactionId);
+    if (interactions.length) inp = Math.round(Math.max.apply(null, interactions.map((e) => e.duration)));
   } catch (e) { /* not supported */ }
 
   // ---------- Security ----------
@@ -296,13 +382,27 @@ async function scorlyInPageAnalyze() {
     return p ? textOf(p).slice(0, 200) : '';
   })();
 
+  // SERP pixel widths, measured locally with a canvas at Google's desktop
+  // rendering sizes (title ≈20px Arial, truncates ≈580px; description ≈14px
+  // Arial, truncates ≈920px). Approximate but far closer than char counts.
+  function serpPixelWidth(text, font) {
+    if (!text) return 0;
+    try {
+      const ctx = document.createElement('canvas').getContext('2d');
+      ctx.font = font;
+      return Math.round(ctx.measureText(text).width);
+    } catch (e) { return null; }
+  }
+  const titlePixels = serpPixelWidth(titleText, '20px Arial');
+  const descPixels = serpPixelWidth(descText, '14px Arial');
+
   return {
     url: location.href,
     hostname,
     protocol: location.protocol,
     isLocalhost,
-    title: { text: titleText, length: titleText.length },
-    metaDescription: { text: descText, length: descText.length },
+    title: { text: titleText, length: titleText.length, pixels: titlePixels },
+    metaDescription: { text: descText, length: descText.length, pixels: descPixels },
     canonical,
     robotsMeta,
     viewport,
@@ -329,7 +429,8 @@ async function scorlyInPageAnalyze() {
     hreflangs,
     firstParagraph,
     textBlocks,
-    perf: { ttfb, transferSize, requestCount, nextHopProtocol, lcp, cls },
+    perf: { ttfb, transferSize, requestCount, nextHopProtocol, lcp, cls, fcp, tbt, inp, renderBlockingCount },
+    resources: resourceList,
     security: { isSecureContext, mixedContentCount, https: location.protocol === 'https:' },
     aiSeo: { hasFaqSchema, hasArticleSchema, semanticLandmarks, hasStructuredData: jsonLd.length > 0, hasMetaDescription: !!descText, hasClearH1: h1Texts.length === 1 },
     eeat: { hasAuthorByline, hasPublishDate, hasAboutLink, hasContactLink, hasPrivacyLink, hasOrgOrPersonSchema },

@@ -50,6 +50,7 @@ function initChrome() {
     state.snapB = t;
     if (state.snapA && state.snapB) renderDiff();
   });
+  el('mapBtn').addEventListener('click', runUrlMapping);
   el('backBtn').addEventListener('click', showSetup);
   el('compareBtn').addEventListener('click', () => {
     if (state.snapA && state.snapB) renderDiff();
@@ -98,6 +99,7 @@ function showPane(which) {
   el('diffOnlyWrap').classList.toggle('hidden', !isDiff);
   el('filterInput').classList.toggle('hidden', !isDiff);
   el('swapBtn').classList.toggle('hidden', !isDiff);
+  el('mapBtn').classList.toggle('hidden', !isDiff);
   el('exportWrap').classList.toggle('hidden', !isDiff);
   if (!isDiff) closeExportMenu();
 }
@@ -176,6 +178,18 @@ function renderSnapshotList(list) {
     when.className = 'snap-when';
     when.textContent = scorlyRelativeTime(snap.capturedAt);
     li.appendChild(when);
+
+    // One-click slotting: picking A then B (or vice versa) starts the diff
+    // immediately via selectSnapshot, no separate Compare press needed.
+    ['a', 'b'].forEach((slot) => {
+      const chosen = slot === 'a' ? state.snapA : state.snapB;
+      const use = document.createElement('button');
+      use.className = 'btn btn-ghost btn-use side-' + slot + (chosen && chosen.id === snap.id ? ' in-slot' : '');
+      use.textContent = chosen && chosen.id === snap.id ? '✓ ' + slot.toUpperCase() : 'Use as ' + slot.toUpperCase();
+      use.title = `Compare this snapshot as side ${slot.toUpperCase()}`;
+      use.addEventListener('click', () => selectSnapshot(slot, snap.id));
+      li.appendChild(use);
+    });
 
     const del = document.createElement('button');
     del.className = 'btn btn-danger-ghost';
@@ -573,18 +587,25 @@ function seqRow(row) {
     for (let j = Math.max(0, i - SEQ_CONTEXT); j <= Math.min(row.ops.length - 1, i + SEQ_CONTEXT); j++) keep.add(j);
   });
 
-  let skipped = 0;
+  let skippedOps = [];
   const flushGap = () => {
-    if (!skipped) return;
-    const gap = document.createElement('div');
+    if (!skippedOps.length) return;
+    const hidden = skippedOps;
+    skippedOps = [];
+    const gap = document.createElement('button');
+    gap.type = 'button';
     gap.className = 'seq-gap';
-    gap.textContent = `… ${skipped} unchanged ${skipped === 1 ? 'line' : 'lines'} …`;
+    gap.textContent = `… ${hidden.length} unchanged ${hidden.length === 1 ? 'line' : 'lines'} — click to expand …`;
+    gap.addEventListener('click', () => {
+      const frag = document.createDocumentFragment();
+      hidden.forEach((op) => frag.appendChild(seqLine(op, row.render)));
+      gap.replaceWith(frag);
+    });
     box.appendChild(gap);
-    skipped = 0;
   };
 
   row.ops.forEach((op, i) => {
-    if (state.diffOnly && !keep.has(i)) { skipped++; return; }
+    if (state.diffOnly && !keep.has(i)) { skippedOps.push(op); return; }
     flushGap();
     box.appendChild(seqLine(op, row.render));
   });
@@ -708,6 +729,88 @@ function checkRow(row) {
   wrap.appendChild(move);
 
   return wrap;
+}
+
+// ---------------------------------------------------------------------------
+// A→B URL mapping
+// ---------------------------------------------------------------------------
+// Takes every internal path linked on A (plus A's own path) and requests it
+// against B's origin: the direct answer to "did the old slugs get redirects?".
+// Network-at-click-time, so it lives here rather than in the pure diff model;
+// the result is appended to the diff as a section, so it renders, filters and
+// exports like everything else. Requests go only to B's own origin.
+
+async function runUrlMapping() {
+  const d = state.diff;
+  if (!d || !state.snapA || !state.snapB) return;
+
+  let bOrigin;
+  try { bOrigin = new URL(state.snapB.url).origin; } catch (e) { return; }
+
+  const paths = [];
+  const seen = new Set();
+  const addPath = (url) => {
+    let path;
+    try { const u = new URL(url); path = u.pathname + u.search; } catch (e) { return; }
+    if (seen.has(path) || paths.length >= 80) return;
+    seen.add(path);
+    paths.push(path);
+  };
+  addPath(state.snapA.url);
+  ((state.snapA.data.links && state.snapA.data.links.internalList) || []).forEach((l) => addPath(l.href));
+
+  const btn = el('mapBtn');
+  btn.disabled = true;
+  btn.textContent = 'Checking…';
+
+  const results = [];
+  let next = 0;
+  async function worker() {
+    while (next < paths.length) {
+      const path = paths[next++];
+      results.push({ path, res: await scorlyFetchStatus(bOrigin + path, 5000) });
+    }
+  }
+  try {
+    await Promise.all(Array.from({ length: 6 }, worker));
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'A→B URLs';
+  }
+
+  const items = results.map(({ path, res }) => {
+    if (res.error || res.status === null) return { key: path, status: 'a-only', a: 'unreachable on B', b: null };
+    if (!res.ok) return { key: path, status: 'a-only', a: `HTTP ${res.status} on B`, b: null };
+    if (res.redirectedTo) return { key: path, status: 'changed', a: path, b: `redirects to ${scorlyPathOf(res.redirectedTo)} (${res.status})` };
+    return { key: path, status: 'b-only', a: null, b: `HTTP ${res.status}` };
+  });
+  const order = { 'a-only': 0, changed: 1, 'b-only': 2 };
+  items.sort((x, y) => (order[x.status] - order[y.status]) || x.key.localeCompare(y.key));
+  const problems = items.filter((i) => i.status !== 'b-only').length;
+
+  const section = {
+    id: 'urlmap',
+    label: "A's URLs on B",
+    changed: problems,
+    hint: `Every internal path linked on A, requested against ${bOrigin} just now. ` +
+      '− broken on B · ~ redirects (fetch cannot distinguish 301 from 302 — verify permanence server-side) · + resolves directly.',
+    rows: [{
+      kind: 'set',
+      label: 'Path mapping',
+      items,
+      countA: paths.length,
+      countB: items.filter((i) => i.status !== 'a-only').length,
+      status: items.length ? 'changed' : 'same',
+    }],
+  };
+
+  const existing = d.sections.findIndex((s) => s.id === 'urlmap');
+  if (existing >= 0) d.sections[existing] = section;
+  else d.sections.push(section);
+  d.totalChanged = d.sections.reduce((n, s) => n + s.changed, 0);
+
+  renderSections();
+  location.hash = '#sec-urlmap';
 }
 
 // ---------------------------------------------------------------------------

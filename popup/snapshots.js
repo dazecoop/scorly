@@ -21,6 +21,7 @@ function scorlySlimSnapshotData(data) {
   if (d.images) d.images.list = (d.images.list || []).slice(0, 120);
   if (d.headings) d.headings.list = (d.headings.list || []).slice(0, 300);
   d.textBlocks = (d.textBlocks || []).slice(0, 600);
+  d.resources = (d.resources || []).slice(0, 300);
   return d;
 }
 

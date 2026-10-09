@@ -319,7 +319,9 @@ function scorlyBuildDiff(snapA, snapB, scoreA, scoreB) {
     label: 'Meta',
     rows: [
       scorlyTextRow('Title', a.title && a.title.text, b.title && b.title.text, { ideal: '10–60 chars' }),
+      scorlyNumRow('Title width', a.title && a.title.pixels, b.title && b.title.pixels, { unit: ' px', betterWhen: null, note: 'Google truncates ≈580px' }),
       scorlyTextRow('Meta description', a.metaDescription && a.metaDescription.text, b.metaDescription && b.metaDescription.text, { ideal: '50–160 chars' }),
+      scorlyNumRow('Description width', a.metaDescription && a.metaDescription.pixels, b.metaDescription && b.metaDescription.pixels, { unit: ' px', betterWhen: null, note: 'Google truncates ≈920px (desktop)' }),
       scorlyValueRow('Canonical', a.canonical, b.canonical),
       scorlyValueRow('Robots meta', a.robotsMeta, b.robotsMeta),
       scorlyValueRow('Viewport', a.viewport, b.viewport),
@@ -401,6 +403,10 @@ function scorlyBuildDiff(snapA, snapB, scoreA, scoreB) {
       scorlyNumRow('External', a.links && a.links.external, b.links && b.links.external),
       scorlyNumRow('Nofollow', a.links && a.links.nofollow, b.links && b.links.nofollow),
       scorlyNumRow('Missing anchor text', a.links && a.links.missingAnchorText, b.links && b.links.missingAnchorText, { betterWhen: 'lower' }),
+      scorlyNumRow('Broken internal links', a.linkCheck && a.linkCheck.broken, b.linkCheck && b.linkCheck.broken, { betterWhen: 'lower' }),
+      scorlyNumRow('Redirected internal links', a.linkCheck && a.linkCheck.redirected, b.linkCheck && b.linkCheck.redirected, { betterWhen: 'lower' }),
+      scorlySetRow('Link target status', a.linkCheck && a.linkCheck.list, b.linkCheck && b.linkCheck.list,
+        (r) => scorlyPathOf(r.url), scorlyLinkStatusFacts),
       scorlySetRow('Internal links', a.links && a.links.internalList, b.links && b.links.internalList,
         (l) => scorlyPathOf(l.href), (l) => l.text + (l.nofollow ? ' [nofollow]' : '')),
       scorlySetRow('External links', a.links && a.links.externalList, b.links && b.links.externalList,
@@ -415,8 +421,15 @@ function scorlyBuildDiff(snapA, snapB, scoreA, scoreB) {
     rows: [
       scorlyNumRow('Images', a.images && a.images.total, b.images && b.images.total),
       scorlyNumRow('Missing alt text', a.images && a.images.missingAlt, b.images && b.images.missingAlt, { betterWhen: 'lower' }),
+      scorlyNumRow('Oversized (≥2× rendered)', a.images && a.images.oversized, b.images && b.images.oversized, { betterWhen: 'lower' }),
+      scorlyNumRow('Legacy format (PNG/JPG/GIF)', a.images && a.images.legacyFormat, b.images && b.images.legacyFormat, { betterWhen: 'lower' }),
+      scorlyNumRow('Missing width/height', a.images && a.images.missingDimensions, b.images && b.images.missingDimensions, { betterWhen: 'lower' }),
+      scorlyNumRow('Lazy-loaded', a.images && a.images.lazyLoaded, b.images && b.images.lazyLoaded),
       scorlySetRow('Alt text', a.images && a.images.list, b.images && b.images.list,
         (i) => scorlyPathOf(i.src), (i) => i.alt || '(no alt)'),
+      scorlySetRow('Image details', a.images && a.images.list, b.images && b.images.list,
+        (i) => scorlyPathOf(i.src), scorlyImageFacts,
+        { note: 'intrinsic→rendered size · format · loading attrs' }),
     ],
   });
 
@@ -426,6 +439,10 @@ function scorlyBuildDiff(snapA, snapB, scoreA, scoreB) {
     rows: [
       scorlySetRow('Schema types', (a.jsonLdTypes || []).map((t) => ({ t })), (b.jsonLdTypes || []).map((t) => ({ t })),
         (x) => x.t, () => ''),
+      scorlySetRow('Validation issues',
+        scorlyValidateStructuredData(a.jsonLd || []), scorlyValidateStructuredData(b.jsonLd || []),
+        (i) => `[${i.severity}] ${i.type}: ${i.message}`, () => '',
+        { note: 'checked against common Google rich-result requirements' }),
       scorlySeqRow('JSON-LD', scorlyPrettyJsonLines(a.jsonLd).map((line, i) => ({ line, i })),
         scorlyPrettyJsonLines(b.jsonLd).map((line, i) => ({ line, i })), (x) => x.line, 'jsonline'),
     ],
@@ -458,8 +475,12 @@ function scorlyBuildDiff(snapA, snapB, scoreA, scoreB) {
     label: 'Performance',
     rows: [
       scorlyNumRow('TTFB', a.perf && a.perf.ttfb, b.perf && b.perf.ttfb, { unit: ' ms', betterWhen: 'lower' }),
+      scorlyNumRow('FCP', a.perf && a.perf.fcp, b.perf && b.perf.fcp, { unit: ' ms', betterWhen: 'lower' }),
       scorlyNumRow('LCP', a.perf && a.perf.lcp, b.perf && b.perf.lcp, { unit: ' ms', betterWhen: 'lower' }),
       scorlyNumRow('CLS', a.perf && a.perf.cls, b.perf && b.perf.cls, { betterWhen: 'lower' }),
+      scorlyNumRow('TBT (approx)', a.perf && a.perf.tbt, b.perf && b.perf.tbt, { unit: ' ms', betterWhen: 'lower', note: 'Chromium only' }),
+      scorlyNumRow('INP', a.perf && a.perf.inp, b.perf && b.perf.inp, { unit: ' ms', betterWhen: 'lower', note: 'needs an interaction before capture' }),
+      scorlyNumRow('Render-blocking resources', a.perf && a.perf.renderBlockingCount, b.perf && b.perf.renderBlockingCount, { betterWhen: 'lower', note: 'Chromium only' }),
       scorlyNumRow('Requests', a.perf && a.perf.requestCount, b.perf && b.perf.requestCount, { betterWhen: 'lower' }),
       scorlyNumRow('Transfer size', a.perf && a.perf.transferSize, b.perf && b.perf.transferSize, { unit: ' bytes', betterWhen: 'lower' }),
       scorlyValueRow('Protocol', a.perf && a.perf.nextHopProtocol, b.perf && b.perf.nextHopProtocol),
@@ -468,6 +489,26 @@ function scorlyBuildDiff(snapA, snapB, scoreA, scoreB) {
     hint: perfComparable
       ? 'Both pages were measured in a visible tab, on your machine and connection.'
       : 'One side was captured in a background tab, where the browser never paints — LCP, CLS and request counts are not comparable. Re-capture both from a visible tab for a reliable read.',
+  });
+
+  sections.push({
+    id: 'requests',
+    label: 'Requests',
+    rows: scorlyRequestTypeRows(a.resources, b.resources, perfComparable).concat([
+      scorlyNumRow('Third-party origins',
+        (a.resources && a.resources.length) ? scorlyThirdPartyOrigins(a).length : null,
+        (b.resources && b.resources.length) ? scorlyThirdPartyOrigins(b).length : null,
+        { betterWhen: perfComparable ? 'lower' : null }),
+      scorlySetRow('Third-party origins', scorlyThirdPartyOrigins(a), scorlyThirdPartyOrigins(b),
+        (o) => o.origin, (o) => `${o.count} req · ${Math.round(o.bytes / 102.4) / 10} KB`),
+      scorlySetRow('Per-request', a.resources, b.resources,
+        (r) => scorlyPathOf(r.url), scorlyRequestFacts),
+    ]),
+    unreliable: !perfComparable,
+    hint: (perfComparable
+      ? 'Every request the page made, matched on path: type · transferred size'
+      : 'One side was captured in a background tab, which loads fewer resources — request differences here may be capture artifacts, not page changes. Matched on path: type · transferred size')
+      + (scorlyHasBlockingInfo(a.resources) || scorlyHasBlockingInfo(b.resources) ? ' · render-blocking flag (Chromium).' : '.'),
   });
 
   // ---- Totals ----
@@ -487,6 +528,76 @@ function scorlyBuildDiff(snapA, snapB, scoreA, scoreB) {
     sections,
     totalChanged: sections.reduce((n, s) => n + s.changed, 0),
   };
+}
+
+function scorlyFormatKb(bytes) {
+  if (!bytes) return 'cache/0 KB';
+  return (Math.round((bytes / 1024) * 10) / 10) + ' KB';
+}
+
+// Comparable value for one request. Duration is deliberately left out of the
+// diff identity — it varies on every capture and would flag every request as
+// "changed" — but it still reaches the popup waterfall and the exports.
+function scorlyRequestFacts(r) {
+  return r.type + ' · ' + scorlyFormatKb(r.transferSize) + (r.renderBlocking && r.type !== 'document' ? ' · render-blocking' : '');
+}
+
+function scorlyHasBlockingInfo(resources) {
+  return (resources || []).some((r) => r.renderBlocking !== null && r.renderBlocking !== undefined && r.type !== 'document');
+}
+
+// One numeric row per resource type (bytes), so "B ships 212 KB more script"
+// is visible before scanning the per-request list.
+function scorlyRequestTypeRows(resA, resB, perfComparable) {
+  const sum = (list) => {
+    const out = {};
+    (list || []).forEach((r) => { out[r.type] = (out[r.type] || 0) + (r.transferSize || 0); });
+    return out;
+  };
+  const a = sum(resA);
+  const b = sum(resB);
+  const types = Array.from(new Set(Object.keys(a).concat(Object.keys(b)))).sort((x, y) => (b[y] || 0) + (a[y] || 0) - (b[x] || 0) - (a[x] || 0));
+  return types.map((t) => scorlyNumRow(t + ' bytes',
+    t in a ? a[t] : null, t in b ? b[t] : null,
+    { unit: ' bytes', betterWhen: perfComparable ? 'lower' : null }));
+}
+
+// Third-party = any origin other than the page's own host, aggregated with
+// request count and bytes so "B added a new tag-manager host" is one row.
+function scorlyThirdPartyOrigins(data) {
+  const origins = new Map();
+  (data.resources || []).forEach((r) => {
+    let u;
+    try { u = new URL(r.url); } catch (e) { return; }
+    if (u.hostname === data.hostname) return;
+    const o = origins.get(u.origin) || { origin: u.origin, count: 0, bytes: 0 };
+    o.count++;
+    o.bytes += r.transferSize || 0;
+    origins.set(u.origin, o);
+  });
+  return Array.from(origins.values());
+}
+
+function scorlyLinkStatusFacts(r) {
+  if (r.skipped) return 'not checked (time budget)';
+  if (r.error || r.status === null) return 'unreachable';
+  let out = 'HTTP ' + r.status;
+  if (r.redirectedTo) out += ' → ' + scorlyPathOf(r.redirectedTo);
+  return out;
+}
+
+function scorlyImageFacts(i) {
+  const parts = [];
+  if (i.naturalW) {
+    parts.push(i.naturalW + '×' + i.naturalH +
+      (i.renderedW && (i.renderedW !== i.naturalW || i.renderedH !== i.naturalH) ? '→' + i.renderedW + '×' + i.renderedH : ''));
+  }
+  if (i.format) parts.push(i.format);
+  if (i.loading) parts.push('loading=' + i.loading);
+  if (i.fetchpriority) parts.push('fetchpriority=' + i.fetchpriority);
+  if (i.hasExplicitSize === false) parts.push('no width/height attrs');
+  if (i.oversized) parts.push('oversized');
+  return parts.join(' · ') || '(no data — recapture with the current version)';
 }
 
 // Path-only identity, so http://localhost:3000/about and

@@ -1,6 +1,133 @@
 // Turns raw page data into category scores + a detailed, severity-tagged checklist.
 // Loaded as a plain script in popup.html (no module system needed).
 
+// ---------------------------------------------------------------------------
+// Structured-data validation
+// ---------------------------------------------------------------------------
+// Checks JSON-LD against the documented required/recommended properties for
+// the common Google rich-result types. This is a local subset, not Rich
+// Results Test parity — Google's full ruleset is not published as a spec.
+// Shared by the popup (schema tab + scoring) and the compare view (diff rows).
+function scorlyValidateStructuredData(jsonLd) {
+  const issues = [];
+  const err = (type, message) => issues.push({ severity: 'error', type, message });
+  const warn = (type, message) => issues.push({ severity: 'warn', type, message });
+
+  const has = (node, prop) => {
+    const v = node && node[prop];
+    if (v === undefined || v === null || v === '') return false;
+    return !(Array.isArray(v) && v.length === 0);
+  };
+  const typeOf = (node) => {
+    const t = node && node['@type'];
+    return Array.isArray(t) ? t[0] : t || null;
+  };
+  const asArray = (v) => (Array.isArray(v) ? v : v === undefined || v === null ? [] : [v]);
+  const isIsoDate = (v) => typeof v === 'string' && /^\d{4}-\d{2}(-\d{2})?([T ]|$)/.test(v);
+
+  function checkDates(node, type) {
+    ['datePublished', 'dateModified'].forEach((prop) => {
+      if (has(node, prop) && !isIsoDate(node[prop])) {
+        warn(type, `${prop} "${String(node[prop]).slice(0, 40)}" is not an ISO 8601 date (e.g. 2026-10-09).`);
+      }
+    });
+  }
+
+  function checkItem(node) {
+    const type = typeOf(node);
+    if (!type) return;
+    const base = String(type);
+
+    if (/^(Article|NewsArticle|BlogPosting|TechArticle)$/i.test(base)) {
+      if (!has(node, 'headline')) err(base, 'Missing required property "headline".');
+      else if (String(node.headline).length > 110) warn(base, `"headline" is ${String(node.headline).length} chars — Google truncates past ~110.`);
+      if (!has(node, 'image')) err(base, 'Missing required property "image".');
+      if (!has(node, 'datePublished')) warn(base, 'Missing recommended property "datePublished".');
+      if (!has(node, 'author')) warn(base, 'Missing recommended property "author".');
+      checkDates(node, base);
+    }
+
+    if (/^Product$/i.test(base)) {
+      if (!has(node, 'name')) err(base, 'Missing required property "name".');
+      if (!has(node, 'offers') && !has(node, 'review') && !has(node, 'aggregateRating')) {
+        err(base, 'Needs at least one of "offers", "review" or "aggregateRating" for rich results.');
+      }
+      asArray(node.offers).forEach((offer) => {
+        if (!offer || typeof offer !== 'object') return;
+        const isAggregate = /AggregateOffer/i.test(typeOf(offer) || '');
+        if (isAggregate ? !has(offer, 'lowPrice') : !has(offer, 'price')) err('Offer', `Missing required property "${isAggregate ? 'lowPrice' : 'price'}".`);
+        if (!has(offer, 'priceCurrency')) err('Offer', 'Missing required property "priceCurrency".');
+      });
+    }
+
+    if (/^FAQPage$/i.test(base)) {
+      if (!has(node, 'mainEntity')) err(base, 'Missing required property "mainEntity" (the list of questions).');
+      asArray(node.mainEntity).forEach((q, i) => {
+        if (!q || typeof q !== 'object') return;
+        if (!has(q, 'name')) err(base, `Question ${i + 1}: missing "name" (the question text).`);
+        const answer = q.acceptedAnswer;
+        if (!answer || !has(answer, 'text')) err(base, `Question ${i + 1}: missing "acceptedAnswer.text".`);
+      });
+    }
+
+    if (/^Review$/i.test(base)) {
+      if (!has(node, 'itemReviewed')) err(base, 'Missing required property "itemReviewed".');
+      if (!has(node, 'reviewRating')) err(base, 'Missing required property "reviewRating".');
+      else if (!has(node.reviewRating, 'ratingValue')) err(base, 'reviewRating is missing "ratingValue".');
+      if (!has(node, 'author')) err(base, 'Missing required property "author".');
+    }
+
+    if (/^AggregateRating$/i.test(base)) {
+      if (!has(node, 'ratingValue')) err(base, 'Missing required property "ratingValue".');
+      if (!has(node, 'ratingCount') && !has(node, 'reviewCount')) err(base, 'Needs "ratingCount" or "reviewCount".');
+    }
+    // Also validate an aggregateRating nested inside another type.
+    if (has(node, 'aggregateRating') && typeof node.aggregateRating === 'object') {
+      const ar = node.aggregateRating;
+      if (!has(ar, 'ratingValue')) err(base, 'aggregateRating is missing "ratingValue".');
+      if (!has(ar, 'ratingCount') && !has(ar, 'reviewCount')) err(base, 'aggregateRating needs "ratingCount" or "reviewCount".');
+    }
+
+    if (/^Organization$/i.test(base)) {
+      if (!has(node, 'name')) err(base, 'Missing required property "name".');
+      if (!has(node, 'url')) warn(base, 'Missing recommended property "url".');
+      if (!has(node, 'logo')) warn(base, 'Missing recommended property "logo".');
+    }
+
+    if (/^BreadcrumbList$/i.test(base)) {
+      if (!has(node, 'itemListElement')) err(base, 'Missing required property "itemListElement".');
+      asArray(node.itemListElement).forEach((li, i) => {
+        if (!li || typeof li !== 'object') return;
+        if (!has(li, 'position')) err(base, `Breadcrumb ${i + 1}: missing "position".`);
+        if (!has(li, 'name') && !(li.item && has(li.item, 'name'))) err(base, `Breadcrumb ${i + 1}: missing "name".`);
+      });
+    }
+
+    if (/^HowTo$/i.test(base)) {
+      if (!has(node, 'name')) err(base, 'Missing required property "name".');
+      if (!has(node, 'step')) err(base, 'Missing required property "step".');
+    }
+  }
+
+  (jsonLd || []).forEach((block, i) => {
+    if (!block || typeof block !== 'object') return;
+    if (block.parseError) {
+      err('JSON-LD', `Block ${i + 1} is not valid JSON and will be ignored by search engines.`);
+      return;
+    }
+    // A block can be a single node, an array of nodes, or an @graph container.
+    const nodes = Array.isArray(block) ? block : block['@graph'] ? asArray(block['@graph']) : [block];
+    if (!Array.isArray(block) && !has(block, '@context')) warn(typeOf(block) || 'JSON-LD', `Block ${i + 1} has no "@context".`);
+    nodes.forEach((node) => {
+      if (!node || typeof node !== 'object') return;
+      if (!typeOf(node)) warn('JSON-LD', `Block ${i + 1} contains a node with no "@type".`);
+      else checkItem(node);
+    });
+  });
+
+  return issues;
+}
+
 function scorlyComputeScore(data) {
 
   function makeCategory() {
@@ -21,16 +148,22 @@ function scorlyComputeScore(data) {
   // ===================== CONTENT =====================
   const content = makeCategory();
   const tLen = data.title.length;
+  const tPx = data.title.pixels;
+  const tPxNote = tPx ? `, ≈${tPx}px` : '';
   if (!tLen) content.add('title', 'Title tag', 'fail', 'Missing <title> tag.', 'high');
-  else if (tLen < 10) content.add('title', 'Title tag', 'warn', `Title is very short (${tLen} chars). Aim for 10–60.`, 'med');
-  else if (tLen > 60) content.add('title', 'Title tag', 'warn', `Title is long (${tLen} chars) and may be truncated in search results.`, 'med');
-  else content.add('title', 'Title tag', 'pass', `"${data.title.text}" (${tLen} chars).`);
+  else if (tLen < 10) content.add('title', 'Title tag', 'warn', `Title is very short (${tLen} chars${tPxNote}). Aim for 10–60.`, 'med');
+  else if (tLen > 60) content.add('title', 'Title tag', 'warn', `Title is long (${tLen} chars${tPxNote}) and may be truncated in search results.`, 'med');
+  else if (tPx && tPx > 580) content.add('title', 'Title tag', 'warn', `Title fits the character guideline (${tLen} chars) but is ≈${tPx}px wide — Google truncates titles around 580px.`, 'med');
+  else content.add('title', 'Title tag', 'pass', `"${data.title.text}" (${tLen} chars${tPxNote}).`);
 
   const dLen = data.metaDescription.length;
+  const dPx = data.metaDescription.pixels;
+  const dPxNote = dPx ? `, ≈${dPx}px` : '';
   if (!dLen) content.add('description', 'Meta description', 'fail', 'Missing meta description.', 'high');
-  else if (dLen < 50) content.add('description', 'Meta description', 'warn', `Description is short (${dLen} chars). Aim for 50–160.`, 'med');
-  else if (dLen > 160) content.add('description', 'Meta description', 'warn', `Description is long (${dLen} chars) and may be truncated.`, 'med');
-  else content.add('description', 'Meta description', 'pass', `${dLen} characters — good length.`);
+  else if (dLen < 50) content.add('description', 'Meta description', 'warn', `Description is short (${dLen} chars${dPxNote}). Aim for 50–160.`, 'med');
+  else if (dLen > 160) content.add('description', 'Meta description', 'warn', `Description is long (${dLen} chars${dPxNote}) and may be truncated.`, 'med');
+  else if (dPx && dPx > 920) content.add('description', 'Meta description', 'warn', `Description fits the character guideline (${dLen} chars) but is ≈${dPx}px wide — Google truncates around 920px on desktop.`, 'med');
+  else content.add('description', 'Meta description', 'pass', `${dLen} characters${dPxNote} — good length.`);
 
   const h1Count = data.headings.h1.length;
   if (h1Count === 0) content.add('h1', 'H1 heading', 'fail', 'No H1 found on the page.', 'high');
@@ -86,6 +219,13 @@ function scorlyComputeScore(data) {
     technical.add('sitemap', 'sitemap.xml', data.sitemapXml ? 'pass' : 'warn',
       data.sitemapXml ? 'sitemap.xml found at site root.' : 'sitemap.xml not found at site root.', 'low');
   }
+  // Only present on snapshots captured since the link checker existed; older
+  // snapshots simply don't get the check rather than a false warning.
+  if (data.linkCheck && data.linkCheck.checked > 0) {
+    const lc = data.linkCheck;
+    if (lc.broken === 0) technical.add('brokenlinks', 'Internal link targets', 'pass', `All ${lc.checked} checked internal links respond OK.`);
+    else technical.add('brokenlinks', 'Internal link targets', 'fail', `${lc.broken} of ${lc.checked} checked internal links are broken (4xx/5xx or unreachable).`, 'high');
+  }
 
   // ===================== MOBILE =====================
   const mobile = makeCategory();
@@ -104,6 +244,14 @@ function scorlyComputeScore(data) {
     schema.add('jsonld', 'Structured data (JSON-LD)', hasParseError ? 'warn' : 'pass',
       `${data.jsonLd.length} JSON-LD block(s): ${data.jsonLdTypes.join(', ') || 'unknown type'}` + (hasParseError ? ' (one or more blocks failed to parse)' : ''),
       hasParseError ? 'med' : 'low');
+  }
+  if (data.jsonLd.length > 0) {
+    const sdIssues = scorlyValidateStructuredData(data.jsonLd);
+    const sdErrors = sdIssues.filter((i) => i.severity === 'error').length;
+    const sdWarns = sdIssues.length - sdErrors;
+    if (sdErrors > 0) schema.add('validation', 'Structured data validation', 'fail', `${sdErrors} error(s)${sdWarns ? `, ${sdWarns} warning(s)` : ''} against common rich-result requirements — see the Schema tab.`, 'high');
+    else if (sdWarns > 0) schema.add('validation', 'Structured data validation', 'warn', `${sdWarns} warning(s) — recommended properties are missing. See the Schema tab.`, 'low');
+    else schema.add('validation', 'Structured data validation', 'pass', `No issues found in ${data.jsonLd.length} block(s) (checked against common Google rich-result requirements).`);
   }
   schema.add('og', 'Open Graph tags', Object.keys(data.og.raw || {}).length > 0 ? 'pass' : 'warn',
     Object.keys(data.og.raw || {}).length > 0 ? `${Object.keys(data.og.raw).length} Open Graph tags found.` : 'No Open Graph tags found.', 'med');
@@ -125,6 +273,36 @@ function scorlyComputeScore(data) {
   else if (cls < 0.25) perf.add('cls', 'Cumulative Layout Shift', 'warn', `${cls} — needs improvement.`, 'med');
   else perf.add('cls', 'Cumulative Layout Shift', 'fail', `${cls} — poor. Content is shifting noticeably as the page loads.`, 'high');
 
+  const fcp = data.perf.fcp;
+  if (fcp == null) perf.add('fcp', 'First Contentful Paint', 'warn', 'Could not measure FCP.', 'low');
+  else if (fcp < 1800) perf.add('fcp', 'First Contentful Paint', 'pass', `${(fcp / 1000).toFixed(1)}s — good.`);
+  else if (fcp < 3000) perf.add('fcp', 'First Contentful Paint', 'warn', `${(fcp / 1000).toFixed(1)}s — needs improvement.`, 'med');
+  else perf.add('fcp', 'First Contentful Paint', 'fail', `${(fcp / 1000).toFixed(1)}s — poor.`, 'high');
+
+  // TBT (longtask API) and render-blocking flags are Chromium-only, and INP
+  // needs a real interaction before capture — these checks only appear when
+  // the browser actually measured something, so Firefox isn't penalized.
+  const tbt = data.perf.tbt;
+  if (tbt != null) {
+    if (tbt < 200) perf.add('tbt', 'Total Blocking Time (approx)', 'pass', `≈${tbt}ms of main-thread blocking — good.`);
+    else if (tbt < 600) perf.add('tbt', 'Total Blocking Time (approx)', 'warn', `≈${tbt}ms of main-thread blocking — needs improvement.`, 'med');
+    else perf.add('tbt', 'Total Blocking Time (approx)', 'fail', `≈${tbt}ms of main-thread blocking — poor. Long JS tasks are freezing the page.`, 'high');
+  }
+
+  const inp = data.perf.inp;
+  if (inp != null) {
+    if (inp < 200) perf.add('inp', 'Interaction to Next Paint', 'pass', `${inp}ms worst interaction — good.`);
+    else if (inp < 500) perf.add('inp', 'Interaction to Next Paint', 'warn', `${inp}ms worst interaction — needs improvement.`, 'med');
+    else perf.add('inp', 'Interaction to Next Paint', 'fail', `${inp}ms worst interaction — poor.`, 'high');
+  }
+
+  const blocking = data.perf.renderBlockingCount;
+  if (blocking != null) {
+    if (blocking <= 4) perf.add('blocking', 'Render-blocking resources', 'pass', `${blocking} render-blocking resource(s).`);
+    else if (blocking <= 10) perf.add('blocking', 'Render-blocking resources', 'warn', `${blocking} render-blocking resources — consider deferring or inlining some.`, 'med');
+    else perf.add('blocking', 'Render-blocking resources', 'fail', `${blocking} render-blocking resources delay first paint.`, 'high');
+  }
+
   const ttfb = data.perf.ttfb;
   if (ttfb == null) perf.add('ttfb', 'Time to first byte', 'warn', 'Could not measure TTFB.', 'low');
   else if (ttfb < 200) perf.add('ttfb', 'Time to first byte', 'pass', `${ttfb}ms — excellent.`);
@@ -136,6 +314,23 @@ function scorlyComputeScore(data) {
   if (reqs <= 50) perf.add('requests', 'Request count', 'pass', `${reqs} requests.`);
   else if (reqs <= 120) perf.add('requests', 'Request count', 'warn', `${reqs} requests — consider reducing.`, 'low');
   else perf.add('requests', 'Request count', 'fail', `${reqs} requests — likely to slow down loading.`, 'med');
+
+  // Third-party origins each cost a DNS lookup + TLS handshake before their
+  // first byte. Counted from the captured waterfall, so absent on old snapshots.
+  if (data.resources && data.resources.length) {
+    const thirdPartyOrigins = new Set();
+    data.resources.forEach((r) => {
+      try {
+        const u = new URL(r.url);
+        if (u.hostname !== data.hostname) thirdPartyOrigins.add(u.origin);
+      } catch (e) { /* ignore */ }
+    });
+    const tp = thirdPartyOrigins.size;
+    if (tp === 0) perf.add('thirdparty', 'Third-party origins', 'pass', 'Everything loads from the page\'s own origin.');
+    else if (tp <= 6) perf.add('thirdparty', 'Third-party origins', 'pass', `${tp} third-party origin(s) — each adds a DNS + TLS hop.`);
+    else if (tp <= 12) perf.add('thirdparty', 'Third-party origins', 'warn', `${tp} third-party origins — each adds a DNS + TLS hop before its first byte.`, 'med');
+    else perf.add('thirdparty', 'Third-party origins', 'fail', `${tp} third-party origins — connection overhead alone is hurting load time.`, 'med');
+  }
 
   const sizeKb = data.perf.transferSize / 1024;
   if (sizeKb <= 1024) perf.add('size', 'Transferred size', 'pass', `${sizeKb.toFixed(0)} KB.`);

@@ -78,6 +78,14 @@ function initTabs() {
     el('tab-' + btn.dataset.tab).classList.add('active');
     btn.scrollIntoView({ inline: 'nearest', block: 'nearest' });
   });
+
+  // The strip's scrollbar is hidden (it ate ~15% of the strip on Windows), so
+  // let a plain mouse wheel scroll it horizontally like a trackpad would.
+  strip.addEventListener('wheel', (e) => {
+    if (Math.abs(e.deltaY) <= Math.abs(e.deltaX)) return;
+    strip.scrollLeft += e.deltaY;
+    e.preventDefault();
+  }, { passive: false });
 }
 
 function initPlatformSwitch() {
@@ -168,6 +176,9 @@ function initCompare() {
 }
 
 document.addEventListener('DOMContentLoaded', () => {
+  // Version read from the manifest at runtime, so the About tab can't drift
+  // from what is actually installed.
+  try { el('aboutVersion').textContent = 'v' + browserApi.runtime.getManifest().version; } catch (e) { /* ignore */ }
   initTabs();
   initPlatformSwitch();
   initCountTiles();

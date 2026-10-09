@@ -159,6 +159,11 @@ body {
 }
 .snap-list .snap-url { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 .snap-list .snap-when { color: var(--text-muted); font-size: 12px; white-space: nowrap; }
+.btn-use { font-size: 12px; padding: 4px 10px; white-space: nowrap; }
+.btn-use.side-a { background: var(--accent-soft); color: var(--accent); }
+.btn-use.side-b { background: var(--surface-2); color: var(--text-muted); }
+.btn-use:hover { filter: brightness(1.15); }
+.btn-use.in-slot { outline: 2px solid var(--accent); }
 .snap-empty { color: var(--text-muted); }
 
 /* ---------------- Side cards ---------------- */
@@ -265,7 +270,8 @@ body {
 .seq-line.eq { color: var(--text-muted); }
 .seq-line.ins { background: var(--pass-bg); color: var(--pass); }
 .seq-line.del { background: var(--fail-bg); color: var(--fail); }
-.seq-gap { padding: 3px 8px; color: var(--text-muted); background: var(--surface-2); font-size: 11px; }
+.seq-gap { display: block; width: 100%; text-align: left; border: none; cursor: pointer; font: inherit; padding: 3px 8px; color: var(--text-muted); background: var(--surface-2); font-size: 11px; }
+.seq-gap:hover { color: var(--text); }
 
 .set-list { list-style: none; margin: 4px 0 0; padding: 0; }
 .set-list li { display: flex; gap: 8px; padding: 5px 8px; border-radius: 6px; overflow-wrap: anywhere; }

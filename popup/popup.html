@@ -91,6 +91,9 @@
       <button class="tab-btn" data-tab="og">
         <svg class="tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>
         Open Graph</button>
+      <button class="tab-btn" data-tab="about">
+        <svg class="tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
+        About</button>
     </nav>
 
     <div class="tab-scroll">
@@ -153,6 +156,31 @@
         <button class="plat-btn" data-plat="discord">Discord/Slack</button>
       </div>
       <div id="ogPreviewArea"></div>
+    </section>
+
+    <section id="tab-about" class="tab-pane">
+      <div class="about-head">
+        <img src="../icons/icon48.png" alt="" width="40" height="40" />
+        <div>
+          <div class="about-name">Scorly <span class="about-version" id="aboutVersion"></span></div>
+          <div class="about-tag">Free, open source SEO analysis. Everything runs locally — nothing is ever uploaded.</div>
+        </div>
+      </div>
+      <div class="about-list">
+        <a class="about-row" href="https://github.com/dazecoop/scorly" target="_blank" rel="noopener">
+          <svg class="tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 0 0-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0 0 20 4.77 5.07 5.07 0 0 0 19.91 1S18.73.65 16 2.48a13.38 13.38 0 0 0-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 0 0 5 4.77a5.44 5.44 0 0 0-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 0 0 9 18.13V22"/></svg>
+          <div><div class="about-row-title">GitHub repository</div><div class="about-row-sub">github.com/dazecoop/scorly</div></div>
+        </a>
+        <a class="about-row" href="https://github.com/dazecoop/scorly/blob/main/PRIVACY.md" target="_blank" rel="noopener">
+          <svg class="tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+          <div><div class="about-row-title">Privacy policy</div><div class="about-row-sub">Local-only by design — read exactly what that means</div></div>
+        </a>
+        <a class="about-row" href="https://github.com/dazecoop/scorly/issues" target="_blank" rel="noopener">
+          <svg class="tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+          <div><div class="about-row-title">Report a bug / request a feature</div><div class="about-row-sub">Open an issue on GitHub</div></div>
+        </a>
+      </div>
+      <p class="about-license">Released under the MIT license.</p>
     </section>
 
     </div>

@@ -34,8 +34,82 @@ function scorlyCheckFavicon(url) {
   });
 }
 
+// Fetches one URL and reports its final status, following redirects. HEAD
+// first to avoid downloading bodies; GET fallback for servers that reject
+// HEAD (405/501). Requests go only to the site being analyzed.
+async function scorlyFetchStatus(url, ms) {
+  const attempt = async (method) => {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), ms);
+    try {
+      const res = await fetch(url, { method, signal: ctrl.signal, cache: 'no-store' });
+      // Only the status matters — stop the body download a GET would start.
+      try { if (res.body) await res.body.cancel(); } catch (e) { /* ignore */ }
+      return {
+        url,
+        status: res.status,
+        ok: res.ok,
+        // fetch follows redirects silently; `redirected` + the final URL is
+        // all it exposes (the 301-vs-302 code would need webRequest).
+        redirectedTo: res.redirected ? res.url : null,
+      };
+    } finally {
+      clearTimeout(timer);
+    }
+  };
+  try {
+    const result = await attempt('HEAD');
+    if (result.status === 405 || result.status === 501) return await attempt('GET');
+    return result;
+  } catch (e) {
+    try { return await attempt('GET'); } catch (e2) {
+      return { url, status: null, ok: false, redirectedTo: null, error: true };
+    }
+  }
+}
+
+// Checks that every internal link on the page actually resolves. Bounded so a
+// link-heavy page can't stall the analysis: 60 unique targets, 6 at a time,
+// and anything still unchecked when the time budget runs out is skipped
+// rather than reported as broken.
+async function scorlyCheckInternalLinks(data, { max = 60, concurrency = 6, perRequestMs = 4000, budgetMs = 10000 } = {}) {
+  const seen = new Set();
+  const targets = [];
+  ((data.links && data.links.internalList) || []).forEach((l) => {
+    if (!l.href || seen.has(l.href) || targets.length >= max) return;
+    seen.add(l.href);
+    targets.push(l.href);
+  });
+  if (!targets.length) return null;
+
+  const started = Date.now();
+  const results = [];
+  let next = 0;
+  async function worker() {
+    while (next < targets.length) {
+      const url = targets[next++];
+      if (Date.now() - started > budgetMs) {
+        results.push({ url, status: null, ok: null, redirectedTo: null, skipped: true });
+        continue;
+      }
+      results.push(await scorlyFetchStatus(url, perRequestMs));
+    }
+  }
+  await Promise.all(Array.from({ length: concurrency }, worker));
+
+  const checked = results.filter((r) => !r.skipped);
+  return {
+    total: targets.length,
+    checked: checked.length,
+    broken: checked.filter((r) => !r.ok).length,
+    redirected: checked.filter((r) => r.ok && r.redirectedTo).length,
+    list: results,
+  };
+}
+
 // Runs the in-page analyzer in `tabId` and adds the few facts that can only be
-// checked from outside the page (origin-level files, favicon reachability).
+// checked from outside the page (origin-level files, favicon reachability,
+// internal link targets).
 async function scorlyAnalyzeTab(tabId) {
   const results = await scorlyBrowser.scripting.executeScript({
     target: { tabId },
@@ -47,15 +121,17 @@ async function scorlyAnalyzeTab(tabId) {
   let origin;
   try { origin = new URL(data.url).origin; } catch (e) { origin = null; }
 
-  const [robotsTxt, sitemapXml, faviconOk] = await Promise.all([
+  const [robotsTxt, sitemapXml, faviconOk, linkCheck] = await Promise.all([
     origin ? scorlyFetchOk(origin + '/robots.txt', 4000) : Promise.resolve(false),
     origin ? scorlyFetchOk(origin + '/sitemap.xml', 4000) : Promise.resolve(false),
     scorlyCheckFavicon(data.favicon),
+    scorlyCheckInternalLinks(data),
   ]);
 
   data.robotsTxt = robotsTxt;
   data.sitemapXml = sitemapXml;
   data.faviconOk = faviconOk;
+  data.linkCheck = linkCheck;
   return data;
 }
 

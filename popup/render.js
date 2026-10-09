@@ -171,8 +171,10 @@ function renderMetaTab(data) {
       </div>`;
   }
   const html = [
-    card('Title', data.title.text, data.title.length ? 'pass' : 'fail', data.title.length ? `${data.title.length}c` : ''),
-    card('Description', data.metaDescription.text, data.metaDescription.length ? 'pass' : 'fail', data.metaDescription.length ? `${data.metaDescription.length}c` : ''),
+    card('Title', data.title.text, data.title.length ? 'pass' : 'fail',
+      data.title.length ? `${data.title.length}c${data.title.pixels ? ` · ${data.title.pixels}px / 580px` : ''}` : ''),
+    card('Description', data.metaDescription.text, data.metaDescription.length ? 'pass' : 'fail',
+      data.metaDescription.length ? `${data.metaDescription.length}c${data.metaDescription.pixels ? ` · ${data.metaDescription.pixels}px / 920px` : ''}` : ''),
     card('Canonical', data.canonical, data.canonical ? 'pass' : 'fail'),
     card('Robots', data.robotsMeta, 'info'),
     card('Viewport', data.viewport, data.viewport ? 'pass' : 'fail'),
@@ -231,14 +233,36 @@ function renderHeadingsTab(data, scoreResult) {
 // ===================== LINKS (summary) =====================
 function renderLinksTab(data) {
   const l = data.links;
+  const lc = data.linkCheck;
   let html = `<div class="tile-grid">
     <div class="tile"><div class="tile-num">${l.internal}</div><div class="tile-label">Internal</div></div>
     <div class="tile"><div class="tile-num">${l.external}</div><div class="tile-label">External</div></div>
     <div class="tile"><div class="tile-num">${l.nofollow}</div><div class="tile-label">Nofollow</div></div>
     <div class="tile"><div class="tile-num">${l.total}</div><div class="tile-label">Total</div></div>
+    ${lc ? `<div class="tile"><div class="tile-num" style="color:${lc.broken ? 'var(--fail)' : 'var(--pass)'}">${lc.broken}</div><div class="tile-label">Broken</div></div>
+    <div class="tile"><div class="tile-num">${lc.redirected}</div><div class="tile-label">Redirected</div></div>` : ''}
   </div>`;
+
+  if (lc) {
+    const problems = lc.list.filter((r) => r.skipped || !r.ok || r.redirectedTo);
+    html += `<div class="panel-title">Link targets (${lc.checked} of ${lc.total} internal links checked)</div>`;
+    if (!problems.length) {
+      html += '<p class="empty-note">Every checked internal link responds OK with no redirects.</p>';
+    } else {
+      html += '<div class="link-list">' + problems.map((r) => {
+        const label = r.skipped ? 'SKIPPED (time budget)' : r.error ? 'UNREACHABLE' : r.ok ? `${r.status} via redirect` : `HTTP ${r.status}`;
+        const cls = r.skipped ? '' : (r.ok ? 'alt-ok' : 'alt-missing');
+        return `<div class="link-row">
+          <div class="link-text"><span class="image-alt ${cls}">${escapeHtml(label)}</span>${r.redirectedTo ? ` <span class="link-href">→ ${escapeHtml(truncate(r.redirectedTo, 70))}</span>` : ''}</div>
+          <div class="link-href">${escapeHtml(truncate(r.url, 90))}</div>
+        </div>`;
+      }).join('') + '</div>';
+    }
+  }
+
   html += '<div class="panel-title">Checks</div>';
   const checks = [];
+  if (lc) checks.push({ status: lc.broken > 0 ? 'fail' : 'pass', severity: lc.broken > 0 ? 'high' : 'low', label: lc.broken > 0 ? `${lc.broken} broken internal link(s)` : `All ${lc.checked} checked internal links respond OK`, detail: '' });
   checks.push({ status: l.missingAnchorText > 0 ? 'warn' : 'pass', severity: 'med', label: l.missingAnchorText > 0 ? `${l.missingAnchorText} link(s) with missing anchor text` : 'All links have anchor text', detail: '' });
   checks.push({ status: 'pass', severity: 'low', label: `${l.total} total links found`, detail: '' });
   html += renderGroupedChecks(checks);
@@ -264,19 +288,38 @@ function renderImagesTab(data) {
   let html = `<div class="tile-grid">
     <div class="tile"><div class="tile-num">${imgs.total}</div><div class="tile-label">Total</div></div>
     <div class="tile"><div class="tile-num">${imgs.missingAlt}</div><div class="tile-label">Missing alt</div></div>
+    <div class="tile"><div class="tile-num">${imgs.oversized != null ? imgs.oversized : '—'}</div><div class="tile-label">Oversized</div></div>
+    <div class="tile"><div class="tile-num">${imgs.legacyFormat != null ? imgs.legacyFormat : '—'}</div><div class="tile-label">PNG/JPG/GIF</div></div>
+    <div class="tile"><div class="tile-num">${imgs.missingDimensions != null ? imgs.missingDimensions : '—'}</div><div class="tile-label">No width/height</div></div>
+    <div class="tile"><div class="tile-num">${imgs.lazyLoaded != null ? imgs.lazyLoaded : '—'}</div><div class="tile-label">Lazy-loaded</div></div>
   </div>`;
   if (!imgs.list.length) {
     html += `<div class="empty-state"><svg class="empty-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg><div>No images found</div></div>`;
   } else {
-    html += '<div class="image-list">' + imgs.list.slice(0, 60).map((img) => `
+    html += '<div class="image-list">' + imgs.list.slice(0, 60).map((img) => {
+      const facts = [];
+      if (img.naturalW) {
+        facts.push(`${img.naturalW}×${img.naturalH}` +
+          (img.renderedW && (img.renderedW !== img.naturalW || img.renderedH !== img.naturalH)
+            ? ` → ${img.renderedW}×${img.renderedH}` : ''));
+      }
+      if (img.format) facts.push(img.format.toUpperCase());
+      if (img.loading) facts.push('loading=' + img.loading);
+      if (img.fetchpriority) facts.push('priority=' + img.fetchpriority);
+      const flags = [];
+      if (img.oversized) flags.push('<span class="img-flag flag-warn">oversized</span>');
+      if (img.format && ['png', 'jpg', 'gif', 'bmp'].includes(img.format)) flags.push('<span class="img-flag flag-warn">WebP/AVIF candidate</span>');
+      if (img.hasExplicitSize === false) flags.push('<span class="img-flag flag-warn">no width/height</span>');
+      return `
       <div class="image-row">
         <div class="image-thumb" style="background-image:url('${(img.src || '').replace(/'/g, '%27')}')"></div>
         <div class="image-meta">
           <div class="image-alt ${img.missing ? 'alt-missing' : 'alt-ok'}">${img.missing ? 'Missing alt' : escapeHtml(truncate(img.alt, 60))}</div>
+          ${facts.length || flags.length ? `<div class="image-facts">${escapeHtml(facts.join(' · '))}${flags.length ? ' ' + flags.join(' ') : ''}</div>` : ''}
           <div class="image-src">${escapeHtml(truncate(img.src || '', 70))}</div>
         </div>
-      </div>
-    `).join('') + '</div>';
+      </div>`;
+    }).join('') + '</div>';
   }
   el('imagesContent').innerHTML = html;
 }
@@ -288,6 +331,19 @@ function renderSchemaTab(data, scoreResult) {
     html += `<div class="empty-state"><svg class="empty-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg><div>No structured data found</div></div>`;
   } else {
     html += '<div class="schema-types">' + data.jsonLdTypes.map((t) => `<span class="chip">${escapeHtml(t)}</span>`).join('') + '</div>';
+
+    const sdIssues = scorlyValidateStructuredData(data.jsonLd);
+    html += '<div class="panel-title">Validation</div>';
+    if (!sdIssues.length) {
+      html += '<p class="empty-note">No issues found against common Google rich-result requirements (local subset — not full Rich Results Test parity).</p>';
+    } else {
+      html += '<div class="link-list">' + sdIssues.map((iss) => `
+        <div class="link-row">
+          <div class="link-text"><span class="image-alt ${iss.severity === 'error' ? 'alt-missing' : ''}" ${iss.severity === 'error' ? '' : 'style="color:var(--warn)"'}>${iss.severity.toUpperCase()}</span> <span class="tag-nofollow">${escapeHtml(iss.type)}</span></div>
+          <div class="link-href">${escapeHtml(iss.message)}</div>
+        </div>`).join('') + '</div>';
+    }
+
     html += '<div class="schema-blocks">' + data.jsonLd.map((j, i) => `
       <details class="schema-block">
         <summary>Block ${i + 1}${j.parseError ? ' — parse error' : (j['@type'] ? ' — ' + escapeHtml(Array.isArray(j['@type']) ? j['@type'].join(', ') : j['@type']) : '')}</summary>
@@ -315,16 +371,88 @@ function renderTechTab(data, scoreResult) {
 function renderPerfTab(data, scoreResult) {
   const p = data.perf;
   const score = scoreResult.categoryScores.perf;
+  const ms = (v) => (v != null ? (v >= 1000 ? (v / 1000).toFixed(1) + 's' : v + 'ms') : '—');
   let html = `<div class="tile-grid">
     <div class="tile"><div class="tile-num">${score}/100</div><div class="tile-label">Score</div></div>
-    <div class="tile"><div class="tile-num">${p.lcp != null ? (p.lcp / 1000).toFixed(1) + 's' : '—'}</div><div class="tile-label">LCP</div></div>
+    <div class="tile"><div class="tile-num">${ms(p.ttfb)}</div><div class="tile-label">TTFB</div></div>
+    <div class="tile"><div class="tile-num">${ms(p.fcp)}</div><div class="tile-label">FCP</div></div>
+    <div class="tile"><div class="tile-num">${ms(p.lcp)}</div><div class="tile-label">LCP</div></div>
     <div class="tile"><div class="tile-num">${p.cls != null ? p.cls : '—'}</div><div class="tile-label">CLS</div></div>
-    <div class="tile"><div class="tile-num">${p.ttfb != null ? p.ttfb + 'ms' : '—'}</div><div class="tile-label">TTFB</div></div>
+    <div class="tile"><div class="tile-num">${ms(p.tbt)}</div><div class="tile-label">TBT ≈</div></div>
+    <div class="tile"><div class="tile-num">${ms(p.inp)}</div><div class="tile-label">INP</div></div>
+    <div class="tile"><div class="tile-num">${p.renderBlockingCount != null ? p.renderBlockingCount : '—'}</div><div class="tile-label">Blocking</div></div>
     <div class="tile"><div class="tile-num">${p.requestCount}</div><div class="tile-label">Requests</div></div>
     <div class="tile"><div class="tile-num">${formatBytes(p.transferSize)}</div><div class="tile-label">Size</div></div>
   </div>`;
+  if (p.inp == null) {
+    html += '<p class="empty-note">INP needs a real interaction — click or type on the page before analyzing to measure it. TBT and the render-blocking flag are only available in Chromium browsers.</p>';
+  }
+  html += renderWaterfall(data.resources);
   html += '<div class="panel-title">Checks</div>' + renderGroupedChecks(scoreResult.categories.perf);
   el('perfContent').innerHTML = html;
+}
+
+// Per-request breakdown: totals by type, then the heaviest requests with
+// size, duration and render-blocking flag. All from the page's own
+// PerformanceResourceTiming buffer — nothing is re-fetched.
+function renderWaterfall(resources) {
+  if (!resources || !resources.length) return '';
+  const byType = new Map();
+  resources.forEach((r) => {
+    const t = byType.get(r.type) || { count: 0, bytes: 0 };
+    t.count++;
+    t.bytes += r.transferSize || 0;
+    byType.set(r.type, t);
+  });
+  let html = '<div class="panel-title">Transfer by type</div><div class="keyword-chips">';
+  html += Array.from(byType.entries())
+    .sort((a, b) => b[1].bytes - a[1].bytes)
+    .map(([type, t]) => `<span class="chip">${escapeHtml(type)} <b>${t.count}</b> (${formatBytes(t.bytes)})</span>`)
+    .join('');
+  html += '</div>';
+
+  // Third-party inventory: who else the page talks to, and what it costs.
+  const origins = new Map();
+  let pageHost = null;
+  try { pageHost = new URL(resources[0].url).hostname; } catch (e) { /* ignore */ }
+  resources.forEach((r) => {
+    let u;
+    try { u = new URL(r.url); } catch (e) { return; }
+    if (u.hostname === pageHost) return;
+    const o = origins.get(u.origin) || { count: 0, bytes: 0, types: new Set() };
+    o.count++;
+    o.bytes += r.transferSize || 0;
+    o.types.add(r.type);
+    origins.set(u.origin, o);
+  });
+  if (origins.size) {
+    html += `<div class="panel-title">Third-party origins (${origins.size})</div><div class="req-list">`;
+    html += Array.from(origins.entries())
+      .sort((a, b) => b[1].bytes - a[1].bytes)
+      .map(([origin, o]) => `<div class="req-row">
+        <span class="req-name" title="${escapeHtml(origin)}">${escapeHtml(truncate(origin.replace(/^https?:\/\//, ''), 44))}</span>
+        <span class="req-type">${escapeHtml(Array.from(o.types).join(','))}</span>
+        <span class="req-size">${o.count} req · ${formatBytes(o.bytes)}</span>
+      </div>`).join('');
+    html += '</div><p class="empty-note">Each origin costs an extra DNS lookup + TLS handshake before its first byte.</p>';
+  }
+
+  const top = resources.slice().sort((a, b) => (b.transferSize || 0) - (a.transferSize || 0)).slice(0, 40);
+  html += '<div class="panel-title">Requests (heaviest first)</div><div class="req-list">';
+  html += top.map((r) => {
+    let path;
+    try { const u = new URL(r.url); path = u.pathname.split('/').pop() || u.hostname; } catch (e) { path = r.url; }
+    return `<div class="req-row">
+      <span class="req-type">${escapeHtml(r.type)}</span>
+      <span class="req-name" title="${escapeHtml(r.url)}">${escapeHtml(truncate(path, 48))}</span>
+      ${r.renderBlocking && r.type !== 'document' ? '<span class="req-blocking">blocking</span>' : ''}
+      <span class="req-size">${r.transferSize ? formatBytes(r.transferSize) : 'cache'}</span>
+      <span class="req-time">${r.duration != null ? r.duration + 'ms' : ''}</span>
+    </div>`;
+  }).join('');
+  html += '</div>';
+  if (resources.length > top.length) html += `<p class="empty-note">Showing the 40 heaviest of ${resources.length} requests. Exports include all captured requests.</p>`;
+  return html;
 }
 
 // ===================== SECURITY =====================

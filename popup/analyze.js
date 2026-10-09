@@ -71,6 +71,58 @@ async function scorlyFetchStatus(url, ms) {
   }
 }
 
+// Checks whether the alternate www/non-www host for this domain redirects to
+// the canonical host — the classic setup where both subdomains serve
+// identical content with no redirect, which search engines treat as
+// duplicate content. Returns null when there's no www/bare-domain pair to
+// check (localhost, bare IPs, or a subdomain other than www).
+async function scorlyCheckWwwRedirect(url, ms) {
+  let u;
+  try { u = new URL(url); } catch (e) { return null; }
+  const host = u.hostname;
+  const isWww = host.startsWith('www.');
+  if (!isWww && host.split('.').length > 2) return null;
+  if (!isWww && !/\./.test(host)) return null; // localhost, bare hostnames
+  const altHost = isWww ? host.slice(4) : 'www.' + host;
+  const altUrl = u.protocol + '//' + altHost + '/';
+
+  let result;
+  try {
+    result = await scorlyFetchStatus(altUrl, ms);
+  } catch (e) {
+    return null;
+  }
+  if (!result.ok) return { checked: true, altHost, duplicate: false, unreachable: true };
+
+  let redirectsToCanonical = false;
+  if (result.redirectedTo) {
+    try { redirectsToCanonical = new URL(result.redirectedTo).hostname === host; } catch (e) { /* ignore */ }
+  }
+  return { checked: true, altHost, duplicate: !redirectsToCanonical, unreachable: false };
+}
+
+// Reads a few security-relevant response headers that page-context JS can
+// never see (document/location expose no header API). A second request to
+// the same URL — cheap, and the only way to get at this data from an extension.
+async function scorlyFetchSecurityHeaders(url, ms) {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), ms);
+  try {
+    const res = await fetch(url, { signal: ctrl.signal, cache: 'no-store' });
+    try { if (res.body) await res.body.cancel(); } catch (e) { /* ignore */ }
+    return {
+      hsts: res.headers.get('strict-transport-security'),
+      csp: res.headers.get('content-security-policy'),
+      xContentTypeOptions: res.headers.get('x-content-type-options'),
+      xFrameOptions: res.headers.get('x-frame-options'),
+    };
+  } catch (e) {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 // Checks that every internal link on the page actually resolves. Bounded so a
 // link-heavy page can't stall the analysis: 60 unique targets, 6 at a time,
 // and anything still unchecked when the time budget runs out is skipped
@@ -133,17 +185,21 @@ async function scorlyAnalyzeTab(tabId, { onPartial } = {}) {
   let origin;
   try { origin = new URL(data.url).origin; } catch (e) { origin = null; }
 
-  const [robotsTxt, sitemapXml, faviconOk, linkCheck] = await Promise.all([
+  const [robotsTxt, sitemapXml, faviconOk, linkCheck, wwwRedirect, securityHeaders] = await Promise.all([
     origin ? scorlyFetchOk(origin + '/robots.txt', 4000) : Promise.resolve(false),
     origin ? scorlyFetchOk(origin + '/sitemap.xml', 4000) : Promise.resolve(false),
     scorlyCheckFavicon(data.favicon),
     scorlyCheckInternalLinks(data),
+    origin ? scorlyCheckWwwRedirect(data.url, 4000) : Promise.resolve(null),
+    (origin && !data.isLocalhost) ? scorlyFetchSecurityHeaders(data.url, 4000) : Promise.resolve(null),
   ]);
 
   data.robotsTxt = robotsTxt;
   data.sitemapXml = sitemapXml;
   data.faviconOk = faviconOk;
   data.linkCheck = linkCheck;
+  data.wwwRedirect = wwwRedirect;
+  data.securityHeaders = securityHeaders;
   return data;
 }
 

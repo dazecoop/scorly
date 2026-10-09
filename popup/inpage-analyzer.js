@@ -79,6 +79,19 @@ async function scorlyInPageAnalyze() {
     headingList.push({ level, text: textOf(h).slice(0, 500) });
   });
   const h1Texts = headingList.filter((h) => h.level === 1).map((h) => h.text);
+  const headingTextCounts = new Map();
+  headingList.forEach((h) => {
+    const key = h.text.toLowerCase();
+    if (!key) return;
+    headingTextCounts.set(key, (headingTextCounts.get(key) || 0) + 1);
+  });
+  const duplicateHeadingCount = Array.from(headingTextCounts.values()).filter((n) => n > 1).length;
+
+  // ---------- Empty bold/strong tags ----------
+  let emptyBoldCount = 0;
+  document.querySelectorAll('b, strong').forEach((el) => {
+    if (!textOf(el)) emptyBoldCount++;
+  });
 
   // ---------- Images ----------
   function imageFormat(url) {
@@ -223,6 +236,43 @@ async function scorlyInPageAnalyze() {
     const kept = text.slice(0, Math.min(4000, textBudget));
     textBudget -= kept.length;
     textBlocks.push({ tag: node.tagName.toLowerCase(), text: kept });
+  });
+
+  // ---------- Duplicate paragraph text ----------
+  // Only paragraphs long enough to be real content — short repeated phrases
+  // ("Read more", "Share") are normal UI chrome, not duplicate content.
+  const paraCounts = new Map();
+  textBlocks.forEach((b) => {
+    if (b.tag !== 'p' || b.text.length < 40) return;
+    const key = b.text.toLowerCase();
+    paraCounts.set(key, (paraCounts.get(key) || 0) + 1);
+  });
+  const duplicateParagraphCount = Array.from(paraCounts.values()).filter((n) => n > 1).length;
+
+  // ---------- Mobile: tap targets & text size ----------
+  // Heuristic, not a real mobile-viewport emulation (there's no headless
+  // browser here to resize) — this measures whatever viewport the page is
+  // actually open at, against the common ~44px tap-target guideline and the
+  // ~12px legibility floor several mobile-SEO tools use.
+  const TAP_TARGET_SELECTOR = 'a[href], button, input[type="button"], input[type="submit"], input[type="reset"], [role="button"]';
+  let smallTapTargets = 0, tapTargetsChecked = 0;
+  document.querySelectorAll(TAP_TARGET_SELECTOR).forEach((el) => {
+    const rect = el.getBoundingClientRect();
+    if (rect.width === 0 || rect.height === 0) return; // not actually rendered/visible
+    tapTargetsChecked++;
+    if (rect.width < 44 || rect.height < 44) smallTapTargets++;
+  });
+
+  let smallFontCount = 0, fontSizeSamplesChecked = 0;
+  document.querySelectorAll('p, li, span, a, td, dd, dt').forEach((el) => {
+    // Leaf elements only (no nested elements) so a sentence isn't counted
+    // once for itself and again for every inline tag inside it.
+    if (fontSizeSamplesChecked >= 300 || el.children.length > 0) return;
+    const text = textOf(el);
+    if (!text || text.length < 10) return;
+    fontSizeSamplesChecked++;
+    const size = parseFloat(getComputedStyle(el).fontSize);
+    if (size && size < 12) smallFontCount++;
   });
 
   // ---------- Open Graph / Twitter ----------
@@ -410,7 +460,7 @@ async function scorlyInPageAnalyze() {
     lang,
     hasDoctype,
     favicon,
-    headings: { list: headingList, counts: headingCounts, h1: h1Texts },
+    headings: { list: headingList, counts: headingCounts, h1: h1Texts, duplicateCount: duplicateHeadingCount },
     images,
     links: {
       internalList, externalList,
@@ -419,6 +469,7 @@ async function scorlyInPageAnalyze() {
     },
     content: {
       wordCount, paragraphCount, sentenceCount, avgSentenceLength, readTimeMin, readability, topKeywords,
+      emptyBoldCount, duplicateParagraphCount,
     },
     wordCount,
     htmlSize,
@@ -432,6 +483,10 @@ async function scorlyInPageAnalyze() {
     perf: { ttfb, transferSize, requestCount, nextHopProtocol, lcp, cls, fcp, tbt, inp, renderBlockingCount },
     resources: resourceList,
     security: { isSecureContext, mixedContentCount, https: location.protocol === 'https:' },
+    mobile: {
+      tapTargets: { checked: tapTargetsChecked, small: smallTapTargets },
+      fontSizes: { checked: fontSizeSamplesChecked, small: smallFontCount },
+    },
     aiSeo: { hasFaqSchema, hasArticleSchema, semanticLandmarks, hasStructuredData: jsonLd.length > 0, hasMetaDescription: !!descText, hasClearH1: h1Texts.length === 1 },
     eeat: { hasAuthorByline, hasPublishDate, hasAboutLink, hasContactLink, hasPrivacyLink, hasOrgOrPersonSchema },
     analyzedAt: new Date().toISOString(),

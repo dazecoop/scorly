@@ -214,6 +214,24 @@ function scorlyComputeScore(data) {
   else if (data.content.readability >= 30) content.add('readability', 'Readability', 'warn', `Flesch reading ease ≈ ${data.content.readability}/100 (fairly difficult).`, 'low');
   else content.add('readability', 'Readability', 'warn', `Flesch reading ease ≈ ${data.content.readability}/100 (difficult to read).`, 'med');
 
+  if (data.content.emptyBoldCount > 0) {
+    content.add('emptytags', 'Empty bold/strong tags', 'warn', `${data.content.emptyBoldCount} empty <b>/<strong> tag(s) found — remove or fill them.`, 'low');
+  } else {
+    content.add('emptytags', 'Empty bold/strong tags', 'pass', 'No empty bold/strong tags found.');
+  }
+
+  if (data.headings.duplicateCount > 0) {
+    content.add('dupheadings', 'Duplicate heading texts', 'warn', `${data.headings.duplicateCount} heading text(s) repeated on this page.`, 'med');
+  } else {
+    content.add('dupheadings', 'Duplicate heading texts', 'pass', 'No duplicate heading texts.');
+  }
+
+  if (data.content.duplicateParagraphCount > 0) {
+    content.add('duptext', 'On-page text duplication', 'warn', `${data.content.duplicateParagraphCount} paragraph(s) of text repeated elsewhere on the page.`, 'low');
+  } else {
+    content.add('duptext', 'On-page text duplication', 'pass', 'No duplicated paragraph text found.');
+  }
+
   // ===================== TECHNICAL =====================
   const technical = makeCategory();
   technical.add('https', 'HTTPS', (data.isLocalhost || data.security.https) ? 'pass' : 'fail',
@@ -248,6 +266,16 @@ function scorlyComputeScore(data) {
     if (lc.broken === 0) technical.add('brokenlinks', 'Internal link targets', 'pass', `All ${lc.checked} checked internal links respond OK.`);
     else technical.add('brokenlinks', 'Internal link targets', 'fail', `${lc.broken} of ${lc.checked} checked internal links are broken (4xx/5xx or unreachable).`, 'high');
   }
+  if (data.wwwRedirect) {
+    const wr = data.wwwRedirect;
+    if (wr.unreachable) {
+      technical.add('wwwredirect', 'www / non-www redirect', 'pass', `${wr.altHost} is not reachable — no duplicate-content risk.`);
+    } else if (wr.duplicate) {
+      technical.add('wwwredirect', 'www / non-www redirect', 'fail', `${wr.altHost} serves content without redirecting to ${data.hostname} — this can cause duplicate-content issues.`, 'high');
+    } else {
+      technical.add('wwwredirect', 'www / non-www redirect', 'pass', `${wr.altHost} redirects to ${data.hostname}.`);
+    }
+  }
 
   // ===================== MOBILE =====================
   const mobile = makeCategory();
@@ -256,6 +284,23 @@ function scorlyComputeScore(data) {
   const viewportScalable = !data.viewport || !/user-scalable=no|maximum-scale=1(\.0)?\b/i.test(data.viewport);
   mobile.add('zoom', 'Pinch-zoom allowed', viewportScalable ? 'pass' : 'warn',
     viewportScalable ? 'Zooming is not disabled.' : 'Viewport disables user scaling — an accessibility issue.', 'med');
+
+  // Heuristic — measured at whatever viewport the page was actually open at,
+  // not a true mobile-emulated layout (no headless browser here to resize).
+  if (data.mobile && data.mobile.tapTargets && data.mobile.tapTargets.checked > 0) {
+    const tt = data.mobile.tapTargets;
+    const ratio = tt.small / tt.checked;
+    if (ratio === 0) mobile.add('taptargets', 'Tap target size', 'pass', `All ${tt.checked} checked tap targets are at least 44×44px.`);
+    else mobile.add('taptargets', 'Tap target size', ratio > 0.3 ? 'fail' : 'warn',
+      `${tt.small} of ${tt.checked} tap targets (links/buttons) are smaller than the recommended 44×44px minimum.`, ratio > 0.3 ? 'high' : 'med');
+  }
+  if (data.mobile && data.mobile.fontSizes && data.mobile.fontSizes.checked > 0) {
+    const fs = data.mobile.fontSizes;
+    const ratio = fs.small / fs.checked;
+    if (ratio === 0) mobile.add('fontsize', 'Mobile font size', 'pass', `No text smaller than 12px found in ${fs.checked} sampled elements.`);
+    else mobile.add('fontsize', 'Mobile font size', ratio > 0.3 ? 'fail' : 'warn',
+      `${fs.small} of ${fs.checked} sampled text elements render smaller than 12px — may be hard to read on mobile.`, ratio > 0.3 ? 'high' : 'med');
+  }
 
   // ===================== SCHEMA =====================
   const schema = makeCategory();
@@ -369,6 +414,20 @@ function scorlyComputeScore(data) {
   security.add('context', 'Secure context', data.security.isSecureContext ? 'pass' : 'warn',
     data.security.isSecureContext ? 'Page is in a secure origin.' : 'Page is not a secure context (some browser APIs unavailable).', 'low');
   security.add('protocol', 'Protocol', 'pass', data.perf.nextHopProtocol ? data.perf.nextHopProtocol.toUpperCase() : 'Unknown', 'low');
+  if (data.securityHeaders) {
+    const sh = data.securityHeaders;
+    if (data.security.https) {
+      security.add('hsts', 'HSTS header', sh.hsts ? 'pass' : 'warn',
+        sh.hsts ? `Strict-Transport-Security: ${sh.hsts}` : 'No Strict-Transport-Security header — HTTPS downgrade attacks are not mitigated.', sh.hsts ? 'low' : 'med');
+    }
+    security.add('csp', 'Content-Security-Policy', sh.csp ? 'pass' : 'warn',
+      sh.csp ? 'Content-Security-Policy header present.' : 'No Content-Security-Policy header — reduces protection against XSS/injection attacks.', sh.csp ? 'low' : 'med');
+    security.add('xcto', 'X-Content-Type-Options', sh.xContentTypeOptions ? 'pass' : 'warn',
+      sh.xContentTypeOptions ? `X-Content-Type-Options: ${sh.xContentTypeOptions}` : 'No X-Content-Type-Options header — browsers may MIME-sniff responses.', 'low');
+    const hasFrameAncestors = sh.csp && /frame-ancestors/i.test(sh.csp);
+    security.add('xfo', 'Clickjacking protection', (sh.xFrameOptions || hasFrameAncestors) ? 'pass' : 'warn',
+      sh.xFrameOptions ? `X-Frame-Options: ${sh.xFrameOptions}` : (hasFrameAncestors ? 'frame-ancestors set via CSP.' : 'No X-Frame-Options header or frame-ancestors CSP directive — page can be framed by other sites.'), 'low');
+  }
 
   // ===================== AI SEO (heuristic) =====================
   const aiSeo = makeCategory();

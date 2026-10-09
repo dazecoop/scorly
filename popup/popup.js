@@ -3,74 +3,22 @@ const browserApi = (typeof browser !== 'undefined') ? browser : chrome;
 let lastData = null;
 let lastScoreResult = null;
 let currentPlatform = 'facebook';
+let savedSnapshotId = null;
 
 const el = (id) => document.getElementById(id);
-
-function isRestrictedUrl(url) {
-  return /^(chrome|chrome-extension|edge|about|moz-extension|view-source|devtools):/i.test(url) ||
-    /^https:\/\/chrome\.google\.com\/webstore/.test(url) ||
-    /^https:\/\/addons\.mozilla\.org/.test(url);
-}
-
-async function fetchWithTimeout(url, ms) {
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), ms);
-  try {
-    const res = await fetch(url, { signal: ctrl.signal, cache: 'no-store' });
-    return res.ok;
-  } catch (e) {
-    return false;
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
-async function checkFavicon(url) {
-  if (!url) return false;
-  return new Promise((resolve) => {
-    const img = new Image();
-    const timer = setTimeout(() => resolve(false), 2500);
-    img.onload = () => { clearTimeout(timer); resolve(true); };
-    img.onerror = () => { clearTimeout(timer); resolve(false); };
-    img.src = url;
-  });
-}
 
 async function analyzeActiveTab() {
   showLoading();
   try {
     const [tab] = await browserApi.tabs.query({ active: true, currentWindow: true });
-    if (!tab || !tab.url || isRestrictedUrl(tab.url)) {
+    if (!tab || !tab.url || scorlyIsRestrictedUrl(tab.url)) {
       showError("This page can't be analyzed (browser-internal or store page).");
       return;
     }
 
-    const results = await browserApi.scripting.executeScript({
-      target: { tabId: tab.id },
-      func: scorlyInPageAnalyze,
-    });
-
-    const data = results && results[0] && results[0].result;
-    if (!data) {
-      showError('Could not read page content.');
-      return;
-    }
-
-    let origin;
-    try { origin = new URL(data.url).origin; } catch (e) { origin = null; }
-
-    const [robotsTxt, sitemapXml, faviconOk] = await Promise.all([
-      origin ? fetchWithTimeout(origin + '/robots.txt', 4000) : Promise.resolve(false),
-      origin ? fetchWithTimeout(origin + '/sitemap.xml', 4000) : Promise.resolve(false),
-      checkFavicon(data.favicon),
-    ]);
-
-    data.robotsTxt = robotsTxt;
-    data.sitemapXml = sitemapXml;
-    data.faviconOk = faviconOk;
-
-    lastData = data;
-    lastScoreResult = scorlyComputeScore(data);
+    lastData = await scorlyAnalyzeTab(tab.id);
+    savedSnapshotId = null;
+    lastScoreResult = scorlyComputeScore(lastData);
 
     renderAll();
   } catch (err) {
@@ -170,12 +118,61 @@ function initTheme() {
   });
 }
 
+
+// ---------------------------------------------------------------------------
+// Compare
+// ---------------------------------------------------------------------------
+
+// The diff is far too wide for a 460px popup, so the popup's job is only to
+// capture a snapshot and hand off to compare.html in a full tab.
+async function refreshSnapCount() {
+  const list = await scorlyLoadSnapshots();
+  el('snapCount').textContent = list.length
+    ? `${list.length} saved`
+    : '';
+}
+
+async function saveCurrentSnapshot() {
+  if (!lastData) return null;
+  if (savedSnapshotId) return savedSnapshotId;
+  const snap = await scorlySaveSnapshot(lastData, { origin: 'tab' });
+  savedSnapshotId = snap.id;
+  await refreshSnapCount();
+  return snap.id;
+}
+
+function flashCmpButton(btn, text) {
+  const original = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = text;
+  setTimeout(() => { btn.textContent = original; btn.disabled = false; }, 1400);
+}
+
+function initCompare() {
+  el('saveSnapBtn').addEventListener('click', async () => {
+    const id = await saveCurrentSnapshot();
+    if (id) flashCmpButton(el('saveSnapBtn'), 'Saved \u2713');
+  });
+
+  el('compareBtn').addEventListener('click', async () => {
+    // Snapshot this page as side A on the way out, so the compare view opens
+    // with one side already filled.
+    const id = await saveCurrentSnapshot();
+    const url = browserApi.runtime.getURL('compare/compare.html') + (id ? '?a=' + encodeURIComponent(id) : '');
+    await browserApi.tabs.create({ url });
+    window.close();
+  });
+
+  refreshSnapCount();
+}
+
 document.addEventListener('DOMContentLoaded', () => {
   initTabs();
   initPlatformSwitch();
   initCountTiles();
   initExportButtons();
   initTheme();
+  initCompare();
   el('refreshBtn').addEventListener('click', analyzeActiveTab);
   analyzeActiveTab();
 });

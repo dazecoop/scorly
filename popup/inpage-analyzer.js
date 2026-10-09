@@ -169,6 +169,22 @@ async function scorlyInPageAnalyze() {
     .slice(0, 12)
     .map(([word, count]) => ({ word, count, pct: wordCount ? Math.round((count / wordCount) * 1000) / 10 : 0 }));
 
+  // ---------- Text blocks (for exact-wording comparison) ----------
+  // One entry per visible copy-bearing element, in document order, so two
+  // captures of the same page can be diffed as a sequence rather than as a
+  // single wall of text.
+  const TEXT_BLOCK_SELECTOR = 'h1,h2,h3,h4,h5,h6,p,li,td,th,blockquote,figcaption,button,label,summary,dt,dd';
+  const textBlocks = [];
+  document.querySelectorAll(TEXT_BLOCK_SELECTOR).forEach((node) => {
+    if (textBlocks.length >= 800) return;
+    // Skip wrappers whose text comes entirely from a nested block we already
+    // captured (e.g. <li><p>…</p></li>) to avoid duplicate diff rows.
+    if (node.querySelector(TEXT_BLOCK_SELECTOR)) return;
+    const text = textOf(node);
+    if (!text) return;
+    textBlocks.push({ tag: node.tagName.toLowerCase(), text: text.slice(0, 600) });
+  });
+
   // ---------- Open Graph / Twitter ----------
   const ogRaw = allMeta('og:');
   const og = {
@@ -312,6 +328,7 @@ async function scorlyInPageAnalyze() {
     jsonLdTypes,
     hreflangs,
     firstParagraph,
+    textBlocks,
     perf: { ttfb, transferSize, requestCount, nextHopProtocol, lcp, cls },
     security: { isSecureContext, mixedContentCount, https: location.protocol === 'https:' },
     aiSeo: { hasFaqSchema, hasArticleSchema, semanticLandmarks, hasStructuredData: jsonLd.length > 0, hasMetaDescription: !!descText, hasClearH1: h1Texts.length === 1 },

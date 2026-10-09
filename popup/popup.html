@@ -3,6 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <title>Scorly</title>
+<link rel="stylesheet" href="theme.css" />
 <link rel="stylesheet" href="popup.css" />
 </head>
 <body>
@@ -38,6 +39,16 @@
     <div class="url-row">
       <span id="pageUrl" class="page-url"></span>
       <span id="localhostBadge" class="badge hidden">localhost</span>
+    </div>
+
+    <div class="compare-bar">
+      <button id="saveSnapBtn" class="cmp-btn" title="Store this page locally so you can diff it against another page later">
+        Save snapshot
+      </button>
+      <button id="compareBtn" class="cmp-btn cmp-btn-primary" title="Open the full comparison view in a new tab">
+        Compare &#8599;
+      </button>
+      <span id="snapCount" class="cmp-count"></span>
     </div>
 
     <nav class="tabs" id="tabStrip">
@@ -156,6 +167,8 @@
 </div>
 <script src="vendor/jspdf.umd.min.js"></script>
 <script src="inpage-analyzer.js"></script>
+<script src="analyze.js"></script>
+<script src="snapshots.js"></script>
 <script src="scoring.js"></script>
 <script src="render.js"></script>
 <script src="export.js"></script>

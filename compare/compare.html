@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Scorly · Compare</title>
+<link rel="stylesheet" href="../popup/theme.css" />
+<link rel="stylesheet" href="compare.css" />
+</head>
+<body>
+
+<header class="cbar">
+  <div class="cbar-brand">
+    <img src="../icons/icon32.png" alt="" width="22" height="22" />
+    <span>Scorly</span>
+    <span class="cbar-sep">·</span>
+    <span class="cbar-title">Compare</span>
+  </div>
+
+  <div class="cbar-actions">
+    <label class="toggle" id="diffOnlyWrap">
+      <input type="checkbox" id="diffOnly" checked />
+      <span>Only differences</span>
+    </label>
+    <input type="search" id="filterInput" class="filter-input" placeholder="Filter fields…" />
+    <button id="swapBtn" class="btn btn-ghost" title="Swap the two sides">⇄ Swap</button>
+    <button id="exportMdBtn" class="btn btn-ghost">Copy as Markdown</button>
+    <button id="exportJsonBtn" class="btn btn-ghost">Export JSON</button>
+    <button id="themeBtn" class="icon-btn" title="Toggle theme">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+    </button>
+  </div>
+</header>
+
+<main class="wrap">
+
+  <!-- ===================== Setup ===================== -->
+  <section id="setupPane" class="setup hidden">
+    <h1 class="setup-h">Compare two pages</h1>
+    <p class="setup-p">
+      Pick a saved snapshot for each side, or load a URL now. Everything stays
+      on this machine — snapshots live in local extension storage and are never
+      uploaded.
+    </p>
+
+    <div class="slot-grid">
+      <div class="slot" data-slot="a">
+        <div class="slot-head"><span class="side-tag side-a">A</span> First page</div>
+        <div class="slot-current" id="slotCurrentA">Nothing selected</div>
+        <select class="slot-select" id="slotSelectA"></select>
+        <form class="slot-form" data-capture="a">
+          <input type="url" class="slot-url" placeholder="https://example.com/page" required />
+          <button type="submit" class="btn btn-primary">Load &amp; capture</button>
+        </form>
+      </div>
+
+      <div class="slot" data-slot="b">
+        <div class="slot-head"><span class="side-tag side-b">B</span> Second page</div>
+        <div class="slot-current" id="slotCurrentB">Nothing selected</div>
+        <select class="slot-select" id="slotSelectB"></select>
+        <form class="slot-form" data-capture="b">
+          <input type="url" class="slot-url" placeholder="http://localhost:3000/page" required />
+          <button type="submit" class="btn btn-primary">Load &amp; capture</button>
+        </form>
+      </div>
+    </div>
+
+    <div class="setup-foot">
+      <button id="compareBtn" class="btn btn-primary btn-lg" disabled>Compare</button>
+      <span id="setupStatus" class="setup-status"></span>
+    </div>
+
+    <div class="snap-manage">
+      <div class="snap-manage-head">
+        <h2>Saved snapshots</h2>
+        <button id="clearAllBtn" class="btn btn-danger-ghost">Delete all</button>
+      </div>
+      <ul id="snapList" class="snap-list"></ul>
+    </div>
+  </section>
+
+  <!-- ===================== Diff ===================== -->
+  <section id="diffPane" class="hidden">
+
+    <div class="sides">
+      <article class="side-card">
+        <header><span class="side-tag side-a">A</span> <span class="side-label" id="sideLabelA"></span></header>
+        <div class="side-score" id="sideScoreA">--</div>
+        <div class="side-url" id="sideUrlA"></div>
+        <div class="side-meta" id="sideMetaA"></div>
+      </article>
+
+      <div class="sides-delta" id="sidesDelta"></div>
+
+      <article class="side-card">
+        <header><span class="side-tag side-b">B</span> <span class="side-label" id="sideLabelB"></span></header>
+        <div class="side-score" id="sideScoreB">--</div>
+        <div class="side-url" id="sideUrlB"></div>
+        <div class="side-meta" id="sideMetaB"></div>
+      </article>
+    </div>
+
+    <div class="summary-row" id="summaryRow"></div>
+
+    <nav class="jump" id="jumpNav"></nav>
+
+    <div id="scoreTable"></div>
+    <div id="sectionHost"></div>
+
+    <footer class="diff-foot">
+      <button id="backBtn" class="btn btn-ghost">← Change pages</button>
+    </footer>
+  </section>
+
+  <div id="busyPane" class="busy hidden">
+    <div class="spinner"></div>
+    <p id="busyText">Working…</p>
+  </div>
+
+</main>
+
+<script src="../popup/inpage-analyzer.js"></script>
+<script src="../popup/analyze.js"></script>
+<script src="../popup/snapshots.js"></script>
+<script src="../popup/scoring.js"></script>
+<script src="diff.js"></script>
+<script src="compare.js"></script>
+</body>
+</html>

@@ -8,9 +8,11 @@
     "build:firefox": "node scripts/build.js firefox",
     "build": "npm run build:chrome && npm run build:firefox",
     "icon": "scripts/generate-icon.sh",
-    "store-assets:chrome": "node scripts/capture-popup.js chrome && node scripts/compose-slides.js chrome",
-    "store-assets:firefox": "node scripts/capture-popup.js firefox && node scripts/compose-slides.js firefox",
-    "store-assets": "npm run store-assets:chrome && npm run store-assets:firefox"
+    "store-assets:chrome": "node scripts/capture-popup.js chrome && node scripts/capture-compare.js && node scripts/compose-slides.js chrome",
+    "store-assets:firefox": "node scripts/capture-popup.js firefox && node scripts/capture-compare.js && node scripts/compose-slides.js firefox",
+    "store-assets": "npm run store-assets:chrome && npm run store-assets:firefox",
+    "test": "node scripts/test-compare.js",
+    "capture:compare": "node scripts/capture-compare.js"
   },
   "devDependencies": {
     "puppeteer": "^25.12.0"

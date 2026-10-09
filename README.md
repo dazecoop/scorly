@@ -5,7 +5,8 @@
 ![Licence](https://img.shields.io/badge/licence-MIT-2F7DD1)
 
 A free, open source browser extension that scores any page's on-page SEO in
-depth and shows how it will look when shared on social platforms.
+depth, shows how it will look when shared on social platforms, and diffs the
+version you're building against the one that's already live.
 
 Click the icon and Scorly reads the page you're already on — no URL to paste,
 no account, no subscription. Nothing leaves your browser except the requests
@@ -14,6 +15,26 @@ nothing is sent to a remote server.
 
 It works on `localhost` and private-network URLs too, where most SEO tools
 simply refuse to run.
+
+### Compare localhost against live
+
+Press **Compare** and Scorly opens a full-tab diff of two pages — your local
+build on one side, production on the other.
+
+Not just the scores: the exact wording. Title, meta description, every `og:`
+and `twitter:` tag, the heading outline, and every paragraph, list item,
+button and label on the page, diffed word by word, so a one-word edit to a
+155-character description reads as a one-word edit instead of "these differ".
+Links and image alt text are matched by path, so the same link on localhost
+and live is never reported as a change.
+
+Fill either side from a snapshot you saved earlier or let Scorly load a URL
+in a background tab. Filter to just the differences, then copy the whole
+thing out as Markdown for a pull request or a client email.
+
+Snapshots live in local extension storage, are capped at 8, and can be
+deleted at any time. Nothing is uploaded, and nothing is stored unless you
+press Save.
 
 ---
 
@@ -45,6 +66,11 @@ extra page load is triggered to measure it.
 **Works where other SEO tools give up.** `localhost` and private-network
 URLs are detected and shown with a badge; HTTPS checks are skipped there
 instead of penalizing a page that was never meant to have a certificate yet.
+
+**Diffs two versions of a page.** See
+[Compare localhost against live](#compare-localhost-against-live) above —
+side-by-side scores, every check whose verdict changed, and word-level diffs
+of all the page's text and tags.
 
 **Exports what it finds.** PDF, CSV, or JSON from the footer bar, all
 generated locally — PDF via a bundled copy of jsPDF, no network call
@@ -92,8 +118,17 @@ toggle.
 - Performance stats come from the page's own `performance` Navigation/
   Resource Timing entries — nothing is re-fetched or re-loaded to measure
   them.
+- **Comparison snapshots stay on your machine.** Pressing *Save snapshot*
+  writes one analysis result to `chrome.storage.local` (local, not synced).
+  Nothing is stored unless you ask for it, at most 8 are kept, and the
+  compare view can delete any or all of them. Nothing is ever uploaded.
+- A page captured in a background tab is never painted by the browser, so it
+  records no LCP or CLS. Scorly marks those snapshots and leaves their paint
+  timings — and the scoring checks derived from them — out of the comparison
+  rather than reporting a regression that isn't real.
 - Everything is processed locally in the browser. The only network calls are
-  to the inspected site itself (robots.txt / sitemap.xml / favicon). See
+  to the inspected site itself (robots.txt / sitemap.xml / favicon), plus any
+  URL you explicitly ask the compare view to load. See
   [PRIVACY.md](PRIVACY.md) for the full breakdown.
 
 ## Project structure
@@ -101,16 +136,36 @@ toggle.
 ```
 manifest.json
 popup/
-  popup.html          UI markup — 13 tabs + export footer
-  popup.css            Styling (light + dark, manual toggle)
+  popup.html           UI markup — 13 tabs + compare bar + export footer
+  theme.css            Design tokens (light + dark), shared with the compare view
+  popup.css            Popup styling
   popup.js             Orchestration: analyze, wire up tabs/buttons
   inpage-analyzer.js   Function injected into the page to extract all SEO/content/perf/security data
+  analyze.js           Shared capture step: run the analyzer in a tab, add robots/sitemap/favicon checks
+  snapshots.js         Local snapshot store (chrome.storage.local) for the compare view
   scoring.js           Turns extracted data into 8 category scores + a severity-tagged checklist
   render.js            All DOM rendering for every tab
   export.js            JSON / CSV / PDF generation
   vendor/jspdf.umd.min.js   Bundled jsPDF (MIT) — used for local, offline PDF export
+compare/
+  compare.html         Full-tab comparison view
+  compare.css          Comparison styling
+  diff.js              Pure diff engine: two snapshots in, a renderable comparison model out
+  compare.js           Compare-view controller and renderers
 icons/
 ```
+
+Build and test:
+
+```
+npm run build            # dist/chrome + dist/firefox, zipped and unpacked
+npm test                 # end-to-end compare checks, driven in real Chrome
+npm run store-assets     # regenerate the store screenshots in store-assets/
+```
+
+`npm test` and the store-asset scripts drive an unpacked build in Chrome via
+Puppeteer against a local two-variant demo server, so `npm run build:chrome`
+has to have run first.
 
 ## Licence
 

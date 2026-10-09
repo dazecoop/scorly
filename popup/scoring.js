@@ -1,6 +1,24 @@
 // Turns raw page data into category scores + a detailed, severity-tagged checklist.
 // Loaded as a plain script in popup.html (no module system needed).
 
+// Google's published good / needs-improvement / poor bands for the Web
+// Vitals (plus the TTFB guidance scoring already uses). Shared by the popup
+// tiles and the compare rows so a value is never colored two different ways.
+const SCORLY_VITAL_BANDS = {
+  ttfb: [600, 1000],
+  fcp: [1800, 3000],
+  lcp: [2500, 4000],
+  cls: [0.1, 0.25],
+  tbt: [200, 600],
+  inp: [200, 500],
+};
+
+function scorlyVitalStatus(metric, value) {
+  const bands = SCORLY_VITAL_BANDS[metric];
+  if (!bands || value === null || value === undefined) return null;
+  return value < bands[0] ? 'pass' : value < bands[1] ? 'warn' : 'fail';
+}
+
 // ---------------------------------------------------------------------------
 // Structured-data validation
 // ---------------------------------------------------------------------------

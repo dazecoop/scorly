@@ -273,7 +273,10 @@ function renderSides() {
     const side = d[k];
     const up = k.toUpperCase();
     el('sideLabel' + up).textContent = side.label;
-    el('sideScore' + up).textContent = d.scores.overall[k];
+    const scoreNode = el('sideScore' + up);
+    const score = d.scores.overall[k];
+    scoreNode.textContent = score;
+    scoreNode.style.color = score >= 80 ? 'var(--pass)' : score >= 50 ? 'var(--warn)' : 'var(--fail)';
     el('sideUrl' + up).textContent = side.url;
     const meta = el('sideMeta' + up);
     meta.innerHTML = '';
@@ -539,20 +542,33 @@ function numGrid(label, a, b, opts) {
   l.textContent = label;
   grid.appendChild(l);
 
+  // Byte rows read as KB/MB; the exports keep the raw byte values.
+  const fmt = (v) => (o.unit === ' bytes' ? formatByteSize(v) : formatNum(v) + (o.unit || ''));
+
   [a, b].forEach((v) => {
     const span = document.createElement('span');
     span.className = 'nval';
-    span.textContent = (v === null || v === undefined) ? '—' : formatNum(v) + (o.unit || '');
+    span.textContent = (v === null || v === undefined) ? '—' : fmt(v);
+    // Web Vital values carry Google's good/needs-improvement/poor tint.
+    const vital = o.vital && scorlyVitalStatus(o.vital, v);
+    if (vital) span.style.color = `var(--${vital})`;
     grid.appendChild(span);
   });
 
   const delta = (a === null || a === undefined || b === null || b === undefined) ? null : b - a;
   const d = document.createElement('span');
   d.className = 'ndelta ' + deltaClass(delta, o.betterWhen);
-  d.textContent = delta === null ? '' : delta === 0 ? '—' : (delta > 0 ? '▲ ' : '▼ ') + formatNum(Math.abs(delta)) + (o.unit || '');
+  d.textContent = delta === null ? '' : delta === 0 ? '—' : (delta > 0 ? '▲ ' : '▼ ') + fmt(Math.abs(delta));
   grid.appendChild(d);
 
   return grid;
+}
+
+function formatByteSize(n) {
+  if (n === null || n === undefined) return '—';
+  if (Math.abs(n) < 1024) return `${Math.round(n)} B`;
+  if (Math.abs(n) < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  return `${(n / (1024 * 1024)).toFixed(2)} MB`;
 }
 
 function deltaClass(delta, betterWhen) {

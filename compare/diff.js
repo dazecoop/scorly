@@ -142,6 +142,7 @@ function scorlyNumRow(label, a, b, opts) {
     unit: o.unit || '',
     betterWhen: o.betterWhen || null,
     note: o.note || null,
+    vital: o.vital || null,
   };
 }
 
@@ -474,12 +475,12 @@ function scorlyBuildDiff(snapA, snapB, scoreA, scoreB) {
     id: 'perf',
     label: 'Performance',
     rows: [
-      scorlyNumRow('TTFB', a.perf && a.perf.ttfb, b.perf && b.perf.ttfb, { unit: ' ms', betterWhen: 'lower' }),
-      scorlyNumRow('FCP', a.perf && a.perf.fcp, b.perf && b.perf.fcp, { unit: ' ms', betterWhen: 'lower' }),
-      scorlyNumRow('LCP', a.perf && a.perf.lcp, b.perf && b.perf.lcp, { unit: ' ms', betterWhen: 'lower' }),
-      scorlyNumRow('CLS', a.perf && a.perf.cls, b.perf && b.perf.cls, { betterWhen: 'lower' }),
-      scorlyNumRow('TBT (approx)', a.perf && a.perf.tbt, b.perf && b.perf.tbt, { unit: ' ms', betterWhen: 'lower', note: 'Chromium only' }),
-      scorlyNumRow('INP', a.perf && a.perf.inp, b.perf && b.perf.inp, { unit: ' ms', betterWhen: 'lower', note: 'needs an interaction before capture' }),
+      scorlyNumRow('TTFB', a.perf && a.perf.ttfb, b.perf && b.perf.ttfb, { unit: ' ms', betterWhen: 'lower', vital: 'ttfb' }),
+      scorlyNumRow('FCP', a.perf && a.perf.fcp, b.perf && b.perf.fcp, { unit: ' ms', betterWhen: 'lower', vital: 'fcp' }),
+      scorlyNumRow('LCP', a.perf && a.perf.lcp, b.perf && b.perf.lcp, { unit: ' ms', betterWhen: 'lower', vital: 'lcp' }),
+      scorlyNumRow('CLS', a.perf && a.perf.cls, b.perf && b.perf.cls, { betterWhen: 'lower', vital: 'cls' }),
+      scorlyNumRow('TBT (approx)', a.perf && a.perf.tbt, b.perf && b.perf.tbt, { unit: ' ms', betterWhen: 'lower', note: 'Chromium only', vital: 'tbt' }),
+      scorlyNumRow('INP', a.perf && a.perf.inp, b.perf && b.perf.inp, { unit: ' ms', betterWhen: 'lower', note: 'needs an interaction before capture', vital: 'inp' }),
       scorlyNumRow('Render-blocking resources', a.perf && a.perf.renderBlockingCount, b.perf && b.perf.renderBlockingCount, { betterWhen: 'lower', note: 'Chromium only' }),
       scorlyNumRow('Requests', a.perf && a.perf.requestCount, b.perf && b.perf.requestCount, { betterWhen: 'lower' }),
       scorlyNumRow('Transfer size', a.perf && a.perf.transferSize, b.perf && b.perf.transferSize, { unit: ' bytes', betterWhen: 'lower' }),

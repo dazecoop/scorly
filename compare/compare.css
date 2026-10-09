@@ -3,6 +3,11 @@
 
 * { box-sizing: border-box; }
 
+/* Jump-nav anchors glide instead of teleporting, and land clear of the two
+   sticky bars (top bar + section pills). */
+html { scroll-behavior: smooth; }
+.sec { scroll-margin-top: 110px; }
+
 body {
   margin: 0;
   background: var(--bg);

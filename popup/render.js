@@ -372,14 +372,21 @@ function renderPerfTab(data, scoreResult) {
   const p = data.perf;
   const score = scoreResult.categoryScores.perf;
   const ms = (v) => (v != null ? (v >= 1000 ? (v / 1000).toFixed(1) + 's' : v + 'ms') : '—');
+  // Web Vital tiles are tinted by Google's good/needs-improvement/poor bands,
+  // so the tab reads at a glance without knowing the thresholds.
+  const vitalTile = (metric, display, label) => {
+    const status = scorlyVitalStatus(metric, p[metric]);
+    const color = status ? ` style="color:var(--${status})"` : '';
+    return `<div class="tile"><div class="tile-num"${color}>${display}</div><div class="tile-label">${label}</div></div>`;
+  };
   let html = `<div class="tile-grid">
-    <div class="tile"><div class="tile-num">${score}/100</div><div class="tile-label">Score</div></div>
-    <div class="tile"><div class="tile-num">${ms(p.ttfb)}</div><div class="tile-label">TTFB</div></div>
-    <div class="tile"><div class="tile-num">${ms(p.fcp)}</div><div class="tile-label">FCP</div></div>
-    <div class="tile"><div class="tile-num">${ms(p.lcp)}</div><div class="tile-label">LCP</div></div>
-    <div class="tile"><div class="tile-num">${p.cls != null ? p.cls : '—'}</div><div class="tile-label">CLS</div></div>
-    <div class="tile"><div class="tile-num">${ms(p.tbt)}</div><div class="tile-label">TBT ≈</div></div>
-    <div class="tile"><div class="tile-num">${ms(p.inp)}</div><div class="tile-label">INP</div></div>
+    <div class="tile"><div class="tile-num" style="color:${scoreColor(score)}">${score}/100</div><div class="tile-label">Score</div></div>
+    ${vitalTile('ttfb', ms(p.ttfb), 'TTFB')}
+    ${vitalTile('fcp', ms(p.fcp), 'FCP')}
+    ${vitalTile('lcp', ms(p.lcp), 'LCP')}
+    ${vitalTile('cls', p.cls != null ? p.cls : '—', 'CLS')}
+    ${vitalTile('tbt', ms(p.tbt), 'TBT ≈')}
+    ${vitalTile('inp', ms(p.inp), 'INP')}
     <div class="tile"><div class="tile-num">${p.renderBlockingCount != null ? p.renderBlockingCount : '—'}</div><div class="tile-label">Blocking</div></div>
     <div class="tile"><div class="tile-num">${p.requestCount}</div><div class="tile-label">Requests</div></div>
     <div class="tile"><div class="tile-num">${formatBytes(p.transferSize)}</div><div class="tile-label">Size</div></div>

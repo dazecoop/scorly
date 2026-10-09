@@ -59,7 +59,10 @@ async function scorlyFetchStatus(url, ms) {
   };
   try {
     const result = await attempt('HEAD');
-    if (result.status === 405 || result.status === 501) return await attempt('GET');
+    // Redirect/tracking endpoints (e.g. affiliate "via=lander" links) often
+    // only implement GET and return a non-2xx to HEAD even though a real
+    // browser's GET navigation succeeds — don't trust a failing HEAD alone.
+    if (!result.ok) return await attempt('GET');
     return result;
   } catch (e) {
     try { return await attempt('GET'); } catch (e2) {

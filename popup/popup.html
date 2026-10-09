@@ -25,14 +25,55 @@
     </div>
   </header>
 
-  <div id="loadingState" class="state-pane">
-    <div class="spinner"></div>
-    <p>Analyzing page…</p>
+  <div id="loadingState" class="state-pane skeleton-pane">
+    <div class="sk sk-url"></div>
+    <div class="sk-row">
+      <div class="sk sk-btn"></div>
+      <div class="sk sk-btn"></div>
+    </div>
+    <div class="sk sk-tabs"></div>
+    <!-- Real score components in waiting state: the ring ticks around like a
+         progress spinner, the category bars shimmer until scores exist. -->
+    <div class="score-row">
+      <div class="score-circle-wrap">
+        <svg viewBox="0 0 120 120" class="score-circle sk-spin">
+          <circle cx="60" cy="60" r="52" class="score-bg" />
+          <circle cx="60" cy="60" r="52" class="score-fg sk-arc" />
+        </svg>
+        <div class="score-number sk-score-number">--</div>
+        <div class="score-caption">SCORE</div>
+      </div>
+      <div class="score-bars">
+        <div class="bar-row"><div class="bar-label">Technical</div><div class="bar-track sk"></div></div>
+        <div class="bar-row"><div class="bar-label">Content</div><div class="bar-track sk"></div></div>
+        <div class="bar-row"><div class="bar-label">Perf</div><div class="bar-track sk"></div></div>
+        <div class="bar-row"><div class="bar-label">Schema</div><div class="bar-track sk"></div></div>
+        <div class="bar-row"><div class="bar-label">Security</div><div class="bar-track sk"></div></div>
+        <div class="bar-row"><div class="bar-label">Mobile</div><div class="bar-track sk"></div></div>
+        <div class="bar-row"><div class="bar-label">AI SEO</div><div class="bar-track sk"></div></div>
+        <div class="bar-row"><div class="bar-label">E-E-A-T</div><div class="bar-track sk"></div></div>
+      </div>
+    </div>
+    <div class="sk-row">
+      <div class="sk sk-tile"></div>
+      <div class="sk sk-tile"></div>
+      <div class="sk sk-tile"></div>
+    </div>
+    <div class="sk-row">
+      <div class="sk sk-tile"></div>
+      <div class="sk sk-tile"></div>
+      <div class="sk sk-tile"></div>
+    </div>
+    <p class="sk-caption" id="loadingCaption">Reading page…</p>
   </div>
 
   <div id="errorState" class="state-pane hidden">
     <p class="error-text" id="errorText"></p>
   </div>
+
+  <!-- Fixed to the popup's bottom edge, outside mainContent so it stays
+       visible from the first click until the slowest check lands. -->
+  <div class="progress hidden" id="progressWrap"><div class="progress-fill" id="progressFill"></div></div>
 
   <div id="mainContent" class="hidden">
 
@@ -106,7 +147,7 @@
             <circle cx="60" cy="60" r="52" class="score-fg" id="scoreArc" />
           </svg>
           <div class="score-number" id="scoreNumber">--</div>
-          <div class="score-caption">SEO SCORE</div>
+          <div class="score-caption" id="scoreCaption">SCORE</div>
         </div>
         <div class="score-bars" id="scoreBars"></div>
       </div>

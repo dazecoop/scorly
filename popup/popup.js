@@ -7,21 +7,125 @@ let savedSnapshotId = null;
 
 const el = (id) => document.getElementById(id);
 
+// ---- Analysis progress bar ----
+// "Realistic" = it trickles toward the cap of the current phase and only
+// jumps when a phase actually completes, so it never sits full while the
+// slow network checks are still running.
+const progress = { value: 0, cap: 0, timer: null };
+
+function progressStart() {
+  const wrap = el('progressWrap');
+  const fill = el('progressFill');
+  wrap.classList.remove('hidden');
+  fill.style.opacity = '1';
+  progress.value = 4;
+  progress.cap = 35; // phase 1: injecting + running the in-page analyzer
+  fill.style.width = '4%';
+  clearInterval(progress.timer);
+  progress.timer = setInterval(() => {
+    progress.value += (progress.cap - progress.value) * 0.08;
+    fill.style.width = progress.value.toFixed(1) + '%';
+    // The pending Technical bar on the overview tracks the same trickle.
+    const techFill = document.getElementById('techPendingFill');
+    if (techFill) techFill.style.width = progress.value.toFixed(1) + '%';
+  }, 150);
+}
+
+function progressPhase(cap) {
+  progress.value = Math.max(progress.value, progress.cap);
+  progress.cap = cap;
+}
+
+function progressDone() {
+  clearInterval(progress.timer);
+  progress.timer = null;
+  const fill = el('progressFill');
+  fill.style.width = '100%';
+  setTimeout(() => { fill.style.opacity = '0'; }, 350);
+  setTimeout(() => {
+    el('progressWrap').classList.add('hidden');
+    fill.style.width = '0';
+  }, 2000);
+}
+
+// ---- Pending score ticker ----
+// While the network checks run, the score deliberately starts below the
+// provisional value and climbs 1 at a time: it reads as "still being earned"
+// instead of flashing a number that is about to change. Colors (number, ring,
+// header chip) track whatever band the displayed value is in.
+const scoreTicker = { timer: null };
+
+// Milliseconds per +1 tick. (Not related to progressDone's timeout, which
+// only controls how long the finished progress bar lingers on screen.)
+const SCORE_TICK_MS = 2000;
+
+function paintTickingScore(shown) {
+  el('scoreNumber').textContent = shown;
+  el('scoreNumber').style.color = scoreColor(shown);
+  el('scoreArc').style.stroke = scoreColor(shown);
+  el('scoreChip').textContent = shown;
+  el('scoreChip').style.background = scoreColor(shown);
+}
+
+function startScoreTicker(target) {
+  stopScoreTicker();
+  let shown = Math.max(1, target - 10);
+  paintTickingScore(shown);
+  scoreTicker.timer = setInterval(() => {
+    if (shown >= target) return; // hold just under lock-in until data lands
+    shown++;
+    paintTickingScore(shown);
+  }, SCORE_TICK_MS);
+}
+
+function stopScoreTicker() {
+  clearInterval(scoreTicker.timer);
+  scoreTicker.timer = null;
+}
+
+// Final flourish: one quick full revolution of the ring while the arc fills
+// to the real score underneath it.
+function lockInScore() {
+  stopScoreTicker();
+  const svg = document.querySelector('#tab-overview .score-circle');
+  svg.classList.add('score-fast-spin');
+  setTimeout(() => svg.classList.remove('score-fast-spin'), 650);
+}
+
 async function analyzeActiveTab() {
   showLoading();
+  progressStart();
   try {
     const [tab] = await browserApi.tabs.query({ active: true, currentWindow: true });
     if (!tab || !tab.url || scorlyIsRestrictedUrl(tab.url)) {
+      progressDone();
       showError("This page can't be analyzed (browser-internal or store page).");
       return;
     }
 
-    lastData = await scorlyAnalyzeTab(tab.id);
+    // Two-phase render: paint everything the in-page analyzer returned the
+    // moment it lands, while the origin checks (robots.txt, sitemap, favicon,
+    // link targets) finish in the background and trigger a second render.
+    lastData = await scorlyAnalyzeTab(tab.id, {
+      onPartial: (data) => {
+        lastData = data;
+        savedSnapshotId = null;
+        lastScoreResult = scorlyComputeScore(data);
+        renderAll(true);
+        startScoreTicker(lastScoreResult.overallScore);
+        setAnalysisPending(true); // no partial snapshots: wait for full data
+        progressPhase(92); // phase 2: network checks, the slow part
+      },
+    });
     savedSnapshotId = null;
     lastScoreResult = scorlyComputeScore(lastData);
-
+    lockInScore();
     renderAll();
+    setAnalysisPending(false);
+    progressDone();
   } catch (err) {
+    stopScoreTicker();
+    progressDone();
     showError('Error analyzing page: ' + (err && err.message ? err.message : String(err)));
   }
 }
@@ -39,18 +143,33 @@ function showError(msg) {
   el('errorText').textContent = msg;
 }
 
+// While origin/link checks are still in flight, a saved snapshot would be
+// missing them — hold Save & Compare until the data is complete.
+function setAnalysisPending(pending) {
+  const save = el('saveSnapBtn');
+  const compare = el('compareBtn');
+  save.disabled = pending;
+  compare.disabled = pending;
+  save.title = pending
+    ? 'Finishing link and origin checks…'
+    : 'Store this page locally so you can diff it against another page later';
+  compare.title = pending
+    ? 'Finishing link and origin checks…'
+    : 'Open the full comparison view in a new tab';
+}
+
 function showMain() {
   el('loadingState').classList.add('hidden');
   el('errorState').classList.add('hidden');
   el('mainContent').classList.remove('hidden');
 }
 
-function renderAll() {
+function renderAll(pending) {
   showMain();
   el('pageUrl').textContent = lastData.url;
   el('localhostBadge').classList.toggle('hidden', !lastData.isLocalhost);
 
-  renderOverview(lastData, lastScoreResult);
+  renderOverview(lastData, lastScoreResult, { pending });
   renderMetaTab(lastData);
   renderContentTab(lastData, lastScoreResult);
   renderHeadingsTab(lastData, lastScoreResult);

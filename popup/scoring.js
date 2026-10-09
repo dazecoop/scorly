@@ -223,7 +223,11 @@ function scorlyComputeScore(data) {
   technical.add('viewport', 'Viewport', data.viewport ? 'pass' : 'fail',
     data.viewport || 'No viewport meta tag — page may not be mobile-friendly.', 'high');
   technical.add('lang', 'Language', data.lang ? 'pass' : 'warn', data.lang || 'Missing lang attribute on <html>.', 'low');
-  technical.add('favicon', 'Favicon', data.faviconOk ? 'pass' : 'warn', data.faviconOk ? 'Favicon present.' : 'Favicon missing or not loading.', 'low');
+  // faviconOk is undefined during a progressive render (the reachability
+  // check is still in flight) — skip rather than flash a false warning.
+  if (data.faviconOk !== undefined) {
+    technical.add('favicon', 'Favicon', data.faviconOk ? 'pass' : 'warn', data.faviconOk ? 'Favicon present.' : 'Favicon missing or not loading.', 'low');
+  }
   technical.add('doctype', 'DOCTYPE', data.hasDoctype ? 'pass' : 'warn', data.hasDoctype ? '<!DOCTYPE html> declared.' : 'Missing DOCTYPE declaration.', 'low');
   technical.add('charset', 'Character encoding', data.charset ? 'pass' : 'warn', data.charset || 'No charset detected.', 'low');
   const robotsBlocking = data.robotsMeta && /noindex/i.test(data.robotsMeta);

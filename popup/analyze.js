@@ -110,13 +110,22 @@ async function scorlyCheckInternalLinks(data, { max = 60, concurrency = 6, perRe
 // Runs the in-page analyzer in `tabId` and adds the few facts that can only be
 // checked from outside the page (origin-level files, favicon reachability,
 // internal link targets).
-async function scorlyAnalyzeTab(tabId) {
+//
+// `onPartial` (optional) fires as soon as the in-page read is done — before
+// the network checks, which on a slow site dominate the wait. The popup uses
+// it to paint everything it already knows; robotsTxt / sitemapXml /
+// faviconOk / linkCheck are still undefined at that point and fill in on the
+// final return (same object, mutated).
+async function scorlyAnalyzeTab(tabId, { onPartial } = {}) {
   const results = await scorlyBrowser.scripting.executeScript({
     target: { tabId },
     func: scorlyInPageAnalyze,
   });
   const data = results && results[0] && results[0].result;
   if (!data) throw new Error('Could not read page content.');
+  if (onPartial) {
+    try { onPartial(data); } catch (e) { /* rendering must not kill analysis */ }
+  }
 
   let origin;
   try { origin = new URL(data.url).origin; } catch (e) { origin = null; }

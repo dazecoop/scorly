@@ -103,24 +103,49 @@ function categoryScoreBox(score, label) {
 }
 
 // ===================== OVERVIEW =====================
-function renderOverview(data, scoreResult) {
+// opts.pending: the in-page data is painted but the network checks are still
+// running — the ring keeps spinning and the ticker in popup.js drives the
+// number, so the score never looks locked-in before it actually is.
+function renderOverview(data, scoreResult, opts) {
+  const pending = !!(opts && opts.pending);
   const { overallScore, categoryScores, counts } = scoreResult;
-  const circumference = 326.7;
-  const offset = circumference - (circumference * overallScore) / 100;
+  const svg = document.querySelector('#tab-overview .score-circle');
   const arc = el('scoreArc');
-  arc.style.stroke = scoreColor(overallScore);
-  requestAnimationFrame(() => { arc.style.strokeDashoffset = offset; });
-  el('scoreNumber').textContent = overallScore;
-  el('scoreNumber').style.color = scoreColor(overallScore);
-  el('scoreChip').textContent = overallScore;
-  el('scoreChip').style.background = scoreColor(overallScore);
+  svg.classList.toggle('score-pending-spin', pending);
+  arc.classList.toggle('sk-arc', pending);
+  el('scoreCaption').innerHTML = pending ? 'SCORE<br><span class="cap-sub">SO FAR</span>' : 'SCORE<br><span class="cap-sub">&nbsp;</span>';
+  if (!pending) {
+    const circumference = 326.7;
+    const offset = circumference - (circumference * overallScore) / 100;
+    arc.style.stroke = scoreColor(overallScore);
+    requestAnimationFrame(() => { arc.style.strokeDashoffset = offset; });
+    el('scoreNumber').textContent = overallScore;
+    el('scoreNumber').style.color = scoreColor(overallScore);
+    el('scoreChip').textContent = overallScore;
+    el('scoreChip').style.background = scoreColor(overallScore);
+  }
 
   el('issuesCount').textContent = counts.issues;
   el('warningsCount').textContent = counts.warnings;
   el('passedCount').textContent = counts.passed;
 
+  // Technical is the one category still waiting on network checks
+  // (robots.txt, sitemap, favicon, link targets) during a pending render —
+  // its bar shimmers until the real score exists instead of showing a number
+  // that is about to change.
+  const PENDING_CATEGORIES = { technical: true };
   const barsHtml = Object.keys(CATEGORY_LABELS).map((key) => {
     const score = categoryScores[key];
+    if (pending && PENDING_CATEGORIES[key]) {
+      // Mirrors the bottom progress bar (popup.js updates this fill on the
+      // same trickle), in a neutral loading color until the score locks in.
+      return `
+      <div class="bar-row">
+        <div class="bar-label">${CATEGORY_LABELS[key]}</div>
+        <div class="bar-track"><div class="bar-fill bar-fill-pending" id="techPendingFill" style="width:0%"></div></div>
+        <div class="bar-value">…</div>
+      </div>`;
+    }
     return `
       <div class="bar-row">
         <div class="bar-label">${CATEGORY_LABELS[key]}</div>
@@ -180,7 +205,7 @@ function renderMetaTab(data) {
     card('Viewport', data.viewport, data.viewport ? 'pass' : 'fail'),
     card('Charset', data.charset, data.charset ? 'pass' : 'warn'),
     card('Language (html lang)', data.lang, data.lang ? 'pass' : 'warn'),
-    card('Favicon', data.favicon, data.faviconOk ? 'pass' : 'warn'),
+    card('Favicon', data.favicon, data.faviconOk === undefined ? '' : (data.faviconOk ? 'pass' : 'warn'), data.faviconOk === undefined ? 'checking…' : ''),
   ].join('');
   el('metaContent').innerHTML = html;
 }
@@ -243,6 +268,11 @@ function renderLinksTab(data) {
     <div class="tile"><div class="tile-num">${lc.redirected}</div><div class="tile-label">Redirected</div></div>` : ''}
   </div>`;
 
+  // undefined = the check is still running (progressive render); null = the
+  // page simply had no internal links to check.
+  if (lc === undefined) {
+    html += '<div class="panel-title">Link targets</div><p class="empty-note">Checking link targets…</p>';
+  }
   if (lc) {
     const problems = lc.list.filter((r) => r.skipped || !r.ok || r.redirectedTo);
     html += `<div class="panel-title">Link targets (${lc.checked} of ${lc.total} internal links checked)</div>`;

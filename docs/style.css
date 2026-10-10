@@ -114,3 +114,69 @@ footer {
 }
 
 footer a { color: var(--muted); }
+
+header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px 24px;
+}
+
+nav { display: flex; gap: 20px; font-size: 0.95rem; }
+nav a { color: var(--muted); text-decoration: none; }
+nav a:hover { color: var(--text); }
+nav a[aria-current="page"] { color: var(--text); font-weight: 600; }
+
+h3 {
+  font-size: 1rem;
+  margin: 28px 0 6px;
+}
+
+.hero {
+  display: block;
+  width: 100%;
+  height: auto;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  margin: 28px 0 8px;
+}
+
+.caption {
+  color: var(--muted);
+  font-size: 0.88rem;
+  margin: 0 0 32px;
+  text-align: center;
+}
+
+.pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 0;
+  margin: 20px 0 0;
+  list-style: none;
+}
+
+.pills li {
+  margin: 0;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 5px 13px;
+  font-size: 0.875rem;
+  color: var(--muted);
+}
+
+.note {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
+  border-radius: 8px;
+  padding: 14px 18px;
+  margin: 24px 0;
+  font-size: 0.94rem;
+  color: var(--muted);
+}
+
+.note strong { color: var(--text); }

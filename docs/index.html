@@ -7,6 +7,12 @@
 <meta name="description" content="A free, open source browser extension that scores any page's on-page SEO in depth, previews its social share card, and diffs localhost against live.">
 <link rel="icon" href="icon32.png" type="image/png">
 <link rel="canonical" href="https://dazecoop.github.io/scorly/">
+<meta property="og:type" content="website">
+<meta property="og:title" content="Scorly — SEO Score &amp; OG Preview">
+<meta property="og:description" content="A full on-page SEO, performance and security audit for any site, plus a social share preview — free, local, no account.">
+<meta property="og:url" content="https://dazecoop.github.io/scorly/">
+<meta property="og:image" content="https://dazecoop.github.io/scorly/social-preview.png">
+<meta name="twitter:card" content="summary_large_image">
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -17,6 +23,11 @@
     <img src="icon32.png" alt="" width="32" height="32">
     <span>Scorly</span>
   </a>
+  <nav>
+    <a href="./" aria-current="page">Overview</a>
+    <a href="support.html">Support</a>
+    <a href="privacy.html">Privacy</a>
+  </nav>
 </header>
 
 <main>
@@ -26,36 +37,117 @@
 depth, shows how it will look when shared, and diffs the version you're
 building against the one that's already live.</p>
 
+<img class="hero" src="social-preview.png" width="1600" height="800"
+     alt="The Scorly panel open over a web page, showing an overall SEO score of 97 with per-category bars for Technical, Content, Perf, Schema, Security, Mobile, AI SEO and E-E-A-T, issue counts, and a SERP preview.">
+<p class="caption">One score, eight categories, and the checks underneath each one.</p>
+
 <p>Click the icon and Scorly reads the page you're already on — no URL to paste,
 no account, no subscription. The analysis runs locally in your browser, and
 nothing is sent to a remote server. It works on <code>localhost</code> and
-private-network URLs too, where most SEO tools refuse to run.</p>
+private-network URLs too, where most SEO tools simply refuse to run.</p>
 
-<h2>What it checks</h2>
-<ul>
-  <li>An overall score from 0&ndash;100 across 8 categories — Technical, Content,
-      Performance, Schema, Security, Mobile, AI Visibility and E-E-A-T — each
-      with a checklist of what passed, what needs attention and what failed</li>
-  <li>Meta tags, readability and keyword statistics, heading structure, internal
-      and external links, image alt text, JSON-LD schema, technology signals,
-      TTFB, request count, transfer size, and security checks</li>
-  <li>How the page is likely to appear when shared, with a fallback preview built
-      from the page content when Open Graph tags are missing</li>
-  <li>A word-by-word diff of any two pages — live, staging or localhost —
-      exportable as PDF, CSV, JSON or Markdown</li>
+<ul class="pills">
+  <li>Works on localhost</li>
+  <li>No account needed</li>
+  <li>Private, local analysis</li>
+  <li>MIT licensed</li>
 </ul>
 
-<h2>Privacy</h2>
-<p>No accounts, no analytics, no tracking and no remote server. See the
-<a href="privacy.html">privacy policy</a> for exactly what is stored and what
-requests are made.</p>
+<h2>Scores the whole page, not just the title tag</h2>
+<p>One overall score from 0&ndash;100, broken into eight categories — Technical,
+Content, Perf, Schema, Security, Mobile, AI Visibility and E-E-A-T — each with
+its own bar, so you can see exactly which part of the page is dragging the
+score down. Every check is tagged pass, warn or fail with a severity, and
+rolled up into the Issues, Warnings and Passed counts on the Overview tab.</p>
 
-<h2>Source</h2>
-<p>Scorly is MIT licensed and the full source, including every scoring rule, is
-on <a href="https://github.com/dazecoop/scorly">GitHub</a>.</p>
+<h2>Explains every check</h2>
+<p>Fourteen tabs of detail: Overview with a SERP preview, AI Insights, Meta,
+Content (readability, word and sentence statistics, top keywords), H Tags,
+Links, internal and external link lists, Images with an alt-text audit, Schema
+with a JSON-LD viewer, Tech, Perf, Security and the share preview. Nothing is
+a bare number you have to take on trust.</p>
+
+<h2>Tells you how visible the page is to AI answer engines</h2>
+<p>The AI Insights tab breaks the AI Visibility score into the six things it is
+made of — crawler access, machine readability, trust signals, freshness,
+human-written copy and build quality — as one bar each. Click a bar to jump to
+the section that explains it.</p>
+
+<h2>Flags copy that reads as unedited AI output</h2>
+<p>Fifteen families of surface tell, taken from Wikipedia's
+<a href="https://en.wikipedia.org/wiki/Wikipedia:Signs_of_AI_writing">Signs of AI
+writing</a>: em-dash density, curly quotes, over-represented vocabulary, stock
+phrase formulas, false ranges, rule-of-three cadence, negative parallelism,
+participle tails, copula avoidance, vague attribution, inline-header lists,
+emoji headings, Title Case headings, uniform sentence rhythm, and chatbot text
+left in the page. Each one names the passages it matched, so you can read the
+evidence rather than trust a number.</p>
+<p>That source is explicit that isolated tells prove nothing — one em dash is
+ordinary writing — so a page tripping fewer than three independent families is
+held below the "some patterns" band no matter how hard it trips them.</p>
+
+<h2>Spots a generated build, and separates it from what that costs</h2>
+<p>Two different questions, answered separately. The <em>verdict</em> identifies the
+toolchain from build fingerprints, source-location attributes left in the
+markup, dev-server artifacts, component-kit and utility-CSS vocabulary, and the
+hydrating-React stack that AI site builders emit. A recognised CMS cancels it.
+The <em>score</em> is only about faults that actually cost visibility — chief among
+them a client-rendered shell, found by comparing the HTML as served against the
+DOM after JavaScript runs, which is the only way to see what a non-executing
+crawler gets.</p>
+<p>A generated site that server-renders and has real copy therefore scores
+100/100 here and is still named as generated. The toolchain is not the
+fault.</p>
+
+<h2>Diffs localhost against live</h2>
+<p>Press <strong>Compare</strong> and Scorly opens a full-tab diff of two pages — your local
+build on one side, production on the other. Not just the scores: the exact
+wording. Title, meta description, every Open Graph and Twitter tag, the heading
+outline, and every paragraph, list item, button and label, diffed word by word,
+so a one-word edit to a 155-character description reads as a one-word edit
+instead of "these differ". Links and image alt text are matched by path, so the
+same link on both sides is never reported as a change.</p>
+<p>Fill either side from a snapshot you saved earlier or let Scorly load a URL in
+a background tab, filter to just the differences, then export the whole
+comparison as PDF, CSV, JSON or Markdown — for a pull request, a client email,
+or a spreadsheet.</p>
+
+<h2>Measures real performance</h2>
+<p>TTFB, request count and transferred size come straight from the browser's own
+Navigation and Resource Timing entries for the page as it actually loaded — no
+extra page load is triggered to measure it, and no synthetic lab score is
+involved.</p>
+
+<h2>Works where other SEO tools give up</h2>
+<p><code>localhost</code> and private-network URLs are detected and shown with a badge, and
+HTTPS checks are skipped there instead of penalizing a page that was never
+meant to have a certificate yet.</p>
+
+<div class="note">
+  <strong>About "AI Visibility" and "E-E-A-T"</strong> — these are heuristic signals
+  (structured data, semantic HTML landmarks, author byline, publish date,
+  about/contact/privacy links and the like), not official metrics from any
+  search engine or AI provider. Treat them as directional indicators, not
+  ground truth. The AI-copy and generated-build detectors count surface
+  patterns and name the evidence; they cannot prove how a page was made, and
+  both are deliberately bounded so neither can sink a page on its own.
+</div>
+
+<h2>Privacy</h2>
+<p>No accounts, no analytics, no tracking and no remote server. The only thing
+Scorly stores is a snapshot you explicitly save, and it stays on your machine.
+The <a href="privacy.html">privacy policy</a> sets out exactly what is stored
+and which requests are made.</p>
+
+<h2>Help and source</h2>
+<p>Questions, bugs and feature requests go to the
+<a href="support.html">support page</a>. Scorly is MIT licensed and the full
+source, including every scoring rule, is on
+<a href="https://github.com/dazecoop/scorly">GitHub</a>.</p>
 </main>
 
 <footer>
+  <a href="support.html">Support</a> ·
   <a href="privacy.html">Privacy policy</a> ·
   <a href="https://github.com/dazecoop/scorly">source on GitHub</a> ·
   MIT licensed

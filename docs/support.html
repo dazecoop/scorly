@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Support — Scorly</title>
+<meta name="description" content="Get help with Scorly: report a bug, request a feature, or read answers to common questions about scores, localhost, privacy and permissions.">
+<link rel="icon" href="icon32.png" type="image/png">
+<link rel="canonical" href="https://dazecoop.github.io/scorly/support.html">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <a class="brand" href="./">
+    <img src="icon32.png" alt="" width="32" height="32">
+    <span>Scorly</span>
+  </a>
+  <nav>
+    <a href="./">Overview</a>
+    <a href="support.html" aria-current="page">Support</a>
+    <a href="privacy.html">Privacy</a>
+  </nav>
+</header>
+
+<main>
+<h1>Support</h1>
+
+<p class="lede">Scorly is free and open source, maintained in the open on GitHub. The fastest
+way to get help, report a bug or ask for a feature is to
+<a href="https://github.com/dazecoop/scorly/issues">open an issue</a> — it's
+public, it gets a reply, and the fix ships in a version anyone can read.</p>
+
+<h2>Reporting a bug</h2>
+<p>Scorly runs against whatever page you point it at, so almost every bug comes
+down to a specific page behaving in a way the analyzer didn't expect. Include
+as much of this as you can:</p>
+<ul>
+  <li>The URL of the page you were analyzing, if it's public. If it's localhost
+      or a client site, a description of the relevant markup is enough — or the
+      exported JSON with anything sensitive removed.</li>
+  <li>Which tab you were on, and what you expected it to say instead.</li>
+  <li>Your browser and version, and the Scorly version from the About tab.</li>
+  <li>A screenshot of the panel, if something looks wrong rather than reads
+      wrong.</li>
+</ul>
+<p>The Export buttons in the popup footer produce a JSON file with the full
+analysis in it. Attaching that to an issue usually tells the whole story.</p>
+
+<h2>Common questions</h2>
+
+<h3>Scorly's score differs from another SEO tool's. Which is right?</h3>
+<p>Both, probably. There is no official on-page SEO score — every tool invents
+its own weighting, so two of them disagreeing is expected rather than a bug.
+What matters is the individual checks underneath the number, which name
+exactly what passed and failed. Every rule Scorly applies is readable in
+<a href="https://github.com/dazecoop/scorly/blob/main/popup/scoring.js"><code>popup/scoring.js</code></a>,
+so you can see precisely why a page scored what it did.</p>
+
+<h3>Do the "AI" features send my page to an AI service?</h3>
+<p>No. Nothing is sent anywhere. The AI Insights tab, the AI Visibility score and
+the AI-copy and vibe-code detectors are all local pattern matching — counting
+phrases, class names, attributes and punctuation in the page already open in
+your browser. "AI" refers to the audience (how readable your page is to AI
+answer engines), not to the method. See the
+<a href="privacy.html">privacy policy</a> for the detail.</p>
+
+<h3>Why does it need access to all sites?</h3>
+<p>Because it can analyze whatever page you're on, and that could be any URL —
+including <code>localhost</code> and private-network addresses. The permission is only ever
+used on the tab you're actively inspecting, when you click the icon. Scorly
+doesn't run on a schedule and doesn't read pages in the background.</p>
+
+<h3>It says my page is client-rendered, but it looks fine to me.</h3>
+<p>That check compares the HTML as the server sent it against the DOM after
+JavaScript has run. If the content only appears in the second one, a crawler
+that doesn't execute JavaScript sees an empty shell — which is the point of
+flagging it, even though the page looks perfect in your browser.</p>
+
+<h3>The AI-copy detector flagged writing I wrote myself.</h3>
+<p>It counts surface patterns and names the passages it matched, and it cannot
+prove how anything was written — good human writing trips some of these tells
+routinely. That's why a page has to trip three independent families of tell
+before anything is deducted, and why the whole detector is capped at a small
+share of one category. Read the evidence it lists and judge it yourself.</p>
+
+<h3>Where are my saved snapshots?</h3>
+<p>In local extension storage on your own machine, never uploaded or synced.
+Scorly keeps at most 8 and discards the oldest beyond that. You can delete any
+or all of them from the compare view, and uninstalling the extension removes
+them.</p>
+
+<h3>A snapshot I saved earlier won't compare properly.</h3>
+<p>Snapshots saved by an older version can be missing fields that a newer version
+expects. Those sections are skipped rather than guessed at. Re-saving the
+snapshot on the current version fixes it.</p>
+
+<h3>Does it work in Firefox and Edge?</h3>
+<p>Yes. The same codebase builds for Chrome, Edge and Firefox.</p>
+
+<h3>Can I use it on a site I don't own?</h3>
+<p>Yes. Everything it reads is already public to anyone visiting the page, and
+nothing is stored unless you save a snapshot.</p>
+
+<h2>Feature requests</h2>
+<p>Open an issue describing what you'd want to see and the situation it would
+help with. Pull requests are welcome too — the source is MIT licensed and the
+scoring rules are deliberately kept readable so they can be argued with.</p>
+
+<h2>Contact</h2>
+<p>For anything else, including privacy questions, open an issue on the
+<a href="https://github.com/dazecoop/scorly/issues">Scorly repository</a> or
+contact <a href="https://github.com/dazecoop">@dazecoop</a> on GitHub.</p>
+</main>
+
+<footer>
+  <a href="./">Overview</a> ·
+  <a href="privacy.html">Privacy policy</a> ·
+  <a href="https://github.com/dazecoop/scorly">source on GitHub</a> ·
+  MIT licensed
+</footer>
+
+</div>
+</body>
+</html>

@@ -24,6 +24,13 @@ function scoreColor(score) {
   return 'var(--fail)';
 }
 
+// The inverse of scoreColor, for the two panels whose numbers mean risk
+// rather than quality (AI copy likelihood, vibe-code confidence) so that red
+// still reads as "problem" and green as "fine".
+function riskColor(risk) {
+  return scoreColor(100 - Math.max(0, Math.min(100, risk)));
+}
+
 function scoreLabel(score) {
   if (score >= 80) return 'Good SEO health';
   if (score >= 50) return 'Needs improvement';
@@ -662,9 +669,27 @@ function renderInsightsTab(data, scoreResult, insights) {
     <span>Computed locally from page signals — no AI involved, nothing leaves your browser.</span>
   </div>`;
 
+  // What the score above is made of, as one bar per component — the same
+  // shape as the Overview tab's category bars, and every bar reads the same
+  // way round (higher is better). Each row scrolls to the panel that explains
+  // it, so the bars double as the tab's table of contents.
+  const breakdown = insights.aiVisibilityBreakdown;
+  if (breakdown && breakdown.components.length) {
+    html += '<div class="panel-title">What Makes Up This Score</div>';
+    html += '<div class="bar-list vis-bars">';
+    html += breakdown.components.map((c) => `
+      <button type="button" class="bar-row vis-bar" data-scrollto="${c.section}" title="${escapeHtml(c.detail)} Worth ${c.cap} of the 100 AI Visibility points; this page earns ${c.earned}.">
+        <div class="bar-label">${escapeHtml(c.label)}</div>
+        <div class="bar-track"><div class="bar-fill" style="width:${Math.max(0, Math.min(100, c.pct))}%;background:${scoreColor(c.pct)}"></div></div>
+        <div class="bar-value">${c.pct}%</div>
+      </button>`).join('');
+    html += '</div>';
+    html += `<p class="empty-note">Each bar is the score shown by the section it opens, so the two always agree. How much each one is worth to AI Visibility is in its tooltip: the first four are worth 30, 30, 25 and 15 points, and the last two are deductions of up to 12 and 10 (capped at 20 together) that only bite past a threshold \u2014 so a section can score below 100 and still cost nothing. This page gives up ${breakdown.deduction} point${breakdown.deduction === 1 ? '' : 's'} in total. AI Visibility is itself 7.5% of the overall score at the top of the popup, so a full 20-point deduction moves that by 1.5.</p>`;
+  }
+
   // ---- AI crawler access ----
   if (data.aiBotAccess) {
-    html += '<div class="panel-title">AI Crawler Access (robots.txt)</div><div class="bot-grid">';
+    html += '<div class="panel-title" id="sec-crawlers">AI Crawler Access (robots.txt)</div><div class="bot-grid">';
     html += data.aiBotAccess.map((b) => `
       <div class="bot-row">
         <span class="bot-dot" style="background:var(--${b.allowed ? 'pass' : 'fail'})"></span>
@@ -680,9 +705,100 @@ function renderInsightsTab(data, scoreResult, insights) {
 
   // ---- AI SEO checks (the markup-level checklist this score is built from) ----
   if (scoreResult && scoreResult.categories && scoreResult.categories.aiSeo) {
-    html += '<div class="panel-title">AI SEO Checks</div>';
+    html += '<div class="panel-title" id="sec-aichecks">AI SEO Checks</div>';
     html += '<p class="checks-intro">The structural checks behind the AI Visibility score above — structured data, schema, semantic HTML and crawler access.</p>';
     html += renderGroupedChecks(scoreResult.categories.aiSeo);
+  }
+
+  // ---- AI copy signals ----
+  // Both of the panels below score the opposite way round to everything else
+  // in the popup: a HIGH number is bad. riskColor inverts scoreColor so the
+  // colour still means what the user expects (red = problem).
+  html += '<div class="panel-title" id="sec-aicopy">AI Copy Signals</div>';
+  if (!insights.aiCopy) {
+    html += '<p class="empty-note">Captured on newer analyses — hit re-analyze to populate this section.</p>';
+  } else if (!insights.aiCopy.available) {
+    html += `<p class="empty-note">Only ${insights.aiCopy.proseWords} words of prose on this page — too little to judge writing patterns either way.</p>`;
+  } else {
+    const ac = insights.aiCopy;
+    html += `<p class="checks-intro">How much this page's copy reads as written by a person rather than left as raw AI output, from the surface tells catalogued in Wikipedia's <i>Signs of AI writing</i>. Scored the same way round as everything else here: 100 is clean, and a low score deducts from AI Visibility above, because Google's spam policies discount mass-produced, low-added-value pages and AI answer engines cite sources that say something specific.</p>`;
+    html += `<div class="risk-head">
+      <div class="risk-big" style="color:${scoreColor(ac.displayScore)}">${ac.displayScore}<span class="risk-of">/100</span></div>
+      <div class="risk-band">
+        <div class="risk-band-label" style="color:${scoreColor(ac.displayScore)}">${escapeHtml(ac.band)}</div>
+        <div class="risk-band-sub">${ac.familyCount} tell${ac.familyCount === 1 ? '' : 's'} found across ${ac.proseWords} words of prose${ac.penalty ? ` \u00b7 costs ${ac.penalty} AI Visibility point${ac.penalty === 1 ? '' : 's'}` : ' \u00b7 no deduction'}</div>
+      </div>
+    </div>`;
+    if (ac.gated) {
+      html += '<p class="empty-note">Fewer than three independent tells fired, so the deduction is held back on purpose \u2014 isolated patterns (one em dash, curly quotes) are ordinary human writing and prove nothing.</p>';
+    }
+    if (ac.floored) {
+      html += '<p class="empty-note">Chatbot text was found in the copy, which sets a floor on the score regardless of the individual tells below \u2014 so these numbers will not add up to the total.</p>';
+    }
+    html += ac.families.length
+      ? '<div class="sig-list">' + ac.families.map((f) => `
+        <div class="sig-row">
+          <div class="sig-head">
+            <span class="sig-label">${escapeHtml(f.label)}</span>
+            <span class="sig-weight" style="background:${riskColor(Math.min(100, f.points * 5))}">\u2212${f.points}</span>
+          </div>
+          <div class="sig-detail">${escapeHtml(f.detail)}</div>
+          ${f.samples && f.samples.length ? '<div class="sig-samples">' + f.samples.map((x) => `<span class="sig-chip">${escapeHtml(x)}</span>`).join('') + '</div>' : ''}
+        </div>`).join('') + '</div>'
+      : '<p class="empty-note">None of the tracked AI writing patterns fired on this page.</p>';
+    html += '<p class="empty-note">Each number above is what that pattern costs the score out of 100. Pattern-matched against the page\u2019s own text in your browser \u2014 no detector can prove authorship, so read the evidence and judge it yourself.</p>';
+  }
+
+  // ---- Vibe-code detection ----
+  html += '<div class="panel-title" id="sec-vibecode">Vibe-Code Detection</div>';
+  if (!insights.vibeCode) {
+    html += '<p class="empty-note">Captured on newer analyses — hit re-analyze to populate this section.</p>';
+  } else {
+    const vc = insights.vibeCode;
+    html += `<p class="checks-intro">Whether this page was built by an AI app-builder, and separately what that costs it. Two different questions on purpose: the toolchain is not a fault, so a generated site that server-renders and has real copy scores 100 here. The score is about the faults; the verdict under it is about the tooling.</p>`;
+    html += `<div class="risk-head">
+      <div class="risk-big" style="color:${scoreColor(vc.buildScore)}">${vc.buildScore}<span class="risk-of">/100</span></div>
+      <div class="risk-band">
+        <div class="risk-band-label" style="color:${scoreColor(vc.buildScore)}">${vc.faults.length ? `${vc.faults.length} fault${vc.faults.length === 1 ? '' : 's'} costing ${vc.penalty} AI Visibility point${vc.penalty === 1 ? '' : 's'}` : 'No generated-site faults'}</div>
+        <div class="risk-band-sub">${['Verdict: ' + escapeHtml(vc.band),
+          vc.builders.length ? vc.builders.map((b) => escapeHtml(b.name)).join(', ') : null,
+          vc.framework ? escapeHtml(vc.framework) : null,
+          vc.platform ? escapeHtml(vc.platform) : null,
+        ].filter(Boolean).join(' \u00b7 ')}</div>
+      </div>
+    </div>`;
+
+    if (vc.servedWords != null) {
+      const pct = vc.renderedWords ? Math.round((vc.servedWords / vc.renderedWords) * 100) : 0;
+      html += `<div class="sig-row">
+        <div class="sig-head"><span class="sig-label">What a non-JavaScript crawler sees</span>
+        <span class="sig-weight" style="background:${scoreColor(pct)}">${pct}%</span></div>
+        <div class="sig-detail">${vc.servedWords} of ${vc.renderedWords} words are present in the HTML as served, before any JavaScript runs.</div>
+        <div class="bar-track"><div class="bar-fill" style="width:${Math.min(100, pct)}%;background:${scoreColor(pct)}"></div></div>
+      </div>`;
+    }
+
+    html += '<div class="sig-sub-title">Faults that cost visibility</div>';
+    html += vc.faults.length
+      ? '<div class="sig-list">' + vc.faults.map((f) => `
+        <div class="sig-row">
+          <div class="sig-head"><span class="sig-label">${escapeHtml(f.label)}</span><span class="sig-weight" style="background:var(--fail)">−${f.points}</span></div>
+          <div class="sig-detail">${escapeHtml(f.detail)}</div>
+        </div>`).join('') + '</div>'
+      : '<p class="empty-note">None — whatever built this page, it did not leave the usual visibility problems behind.</p>';
+
+    // Evidence rows carry a strength word rather than a number: these feed the
+    // verdict, not the score, so a signed number here would read as points
+    // gained or lost when it is neither.
+    html += '<div class="sig-sub-title">Detection evidence</div>';
+    html += '<p class="checks-intro">What suggests this page was generated. None of this deducts anything by itself.</p>';
+    html += vc.signals.length
+      ? '<div class="sig-list">' + vc.signals.map((f) => `
+        <div class="sig-row">
+          <div class="sig-head"><span class="sig-label">${escapeHtml(f.label)}</span><span class="sig-weight sig-strength-${f.strength}">${f.strength}</span></div>
+          <div class="sig-detail">${escapeHtml(f.detail)}</div>
+        </div>`).join('') + '</div>'
+      : '<p class="empty-note">No AI-builder fingerprints found.</p>';
   }
 
   // ---- Domain business context ----
@@ -716,7 +832,7 @@ function renderInsightsTab(data, scoreResult, insights) {
   html += '</div>';
 
   // ---- Content trust score ----
-  html += '<div class="panel-title">Content Trust Score</div>';
+  html += '<div class="panel-title" id="sec-trust">Content Trust Score</div>';
   if (insights.trust) {
     const t = insights.trust;
     html += `<div class="trust-row">
@@ -734,7 +850,7 @@ function renderInsightsTab(data, scoreResult, insights) {
   }
 
   // ---- Content freshness ----
-  html += '<div class="panel-title">Content Freshness</div>';
+  html += '<div class="panel-title" id="sec-freshness">Content Freshness</div>';
   if (insights.freshness) {
     const f = insights.freshness;
     html += `<div class="trust-row"><div class="trust-big" style="color:${scoreColor(f.score)}">${f.score}%</div><div class="fresh-signals">`;

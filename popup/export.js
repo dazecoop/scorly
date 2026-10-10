@@ -226,6 +226,19 @@ function toCsv(data, scoreResult) {
 
   if (m.insights) {
     push('AI Visibility Explained', m.insights.aiVisibility);
+    if (m.insights.aiCopy && m.insights.aiCopy.available) {
+      push('AI Copy Score', `${m.insights.aiCopy.displayScore}/100 (${m.insights.aiCopy.band})`);
+      push('AI Copy Tells', m.insights.aiCopy.families.map((f) => f.label).join('; ') || 'None');
+      push('AI Visibility Deduction (AI copy)', m.insights.aiCopy.penalty);
+    }
+    if (m.insights.vibeCode) {
+      push('Build Quality Score', `${m.insights.vibeCode.buildScore}/100`);
+      push('Vibe-Code Verdict', `${m.insights.vibeCode.band} (${m.insights.vibeCode.score}/100 confidence)`);
+      push('Detected Builder', m.insights.vibeCode.builders.map((b) => b.name).join('; ') || 'None');
+      push('Generated-Site Faults', m.insights.vibeCode.faults.map((f) => f.label).join('; ') || 'None');
+      if (m.insights.vibeCode.servedWords != null) push('Words in Served HTML', `${m.insights.vibeCode.servedWords} of ${m.insights.vibeCode.renderedWords}`);
+      push('AI Visibility Deduction (vibe code)', m.insights.vibeCode.penalty);
+    }
     if (m.insights.trust) push('Content Trust Score', m.insights.trust.score);
     if (m.insights.freshness) push('Content Freshness Score', m.insights.freshness.score);
     if (m.insights.businessContext) push('Detected Business Name', m.insights.businessContext.siteName);
@@ -329,6 +342,52 @@ function toMarkdown(data, scoreResult) {
         ['Social profiles', bc.socialProfiles && bc.socialProfiles.length ? bc.socialProfiles.join(', ') : null]]
         .filter(([, v]) => v).forEach(([l, v]) => lines.push(`- **${l}**: ${v}`));
       lines.push('');
+    }
+
+    if (insights.aiCopy && insights.aiCopy.available) {
+      const ac = insights.aiCopy;
+      lines.push('### AI copy signals');
+      lines.push('');
+      lines.push(`**${ac.displayScore}/100 — ${ac.band}** (${ac.familyCount} tells found across ${ac.proseWords} words of prose${ac.penalty ? `, costing ${ac.penalty} AI Visibility points` : ', no deduction'}). Higher is better, as everywhere else in this report.`);
+      lines.push('');
+      lines.push('Matched against the surface tells catalogued in Wikipedia\u2019s *Signs of AI writing*. A high score matters because Google\u2019s spam policies discount mass-produced, low-added-value pages and AI answer engines cite sources that say something specific. No detector can prove authorship — the evidence is listed so it can be judged.');
+      lines.push('');
+      if (ac.families.length) {
+        ac.families.forEach((f) => {
+          lines.push(`- **${f.label}** (−${f.points}) — ${f.detail}`);
+          if (f.samples && f.samples.length) lines.push(`  - Evidence: ${f.samples.map((x) => `\`${x}\``).join(', ')}`);
+        });
+      } else {
+        lines.push('- None of the tracked AI writing patterns fired on this page.');
+      }
+      lines.push('');
+    }
+
+    if (insights.vibeCode) {
+      const vc = insights.vibeCode;
+      lines.push('### Vibe-code detection');
+      lines.push('');
+      lines.push(`**${vc.buildScore}/100** — ${vc.faults.length ? `${vc.faults.length} fault(s) costing ${vc.penalty} AI Visibility points` : 'no generated-site faults'}.`);
+      lines.push('');
+      lines.push(`**Verdict**: ${vc.band} (${vc.score}/100 confidence)${vc.builders.length ? ` — ${vc.builders.map((b) => b.name).join(', ')}` : ''}.`);
+      lines.push('');
+      lines.push('These are two separate things: an AI app-builder is not itself an SEO fault, so a generated site that server-renders and has real copy scores 100 above. Only the faults below deduct.');
+      lines.push('');
+      if (vc.servedWords != null) {
+        lines.push(`**Served HTML**: ${vc.servedWords} of ${vc.renderedWords} words are present before JavaScript runs — what a non-executing crawler sees.`);
+        lines.push('');
+      }
+      lines.push('**Faults that cost visibility**');
+      lines.push('');
+      if (vc.faults.length) vc.faults.forEach((f) => lines.push(`- **${f.label}** (−${f.points}) — ${f.detail}`));
+      else lines.push('- None — whatever built this page, it did not leave the usual visibility problems behind.');
+      lines.push('');
+      if (vc.signals.length) {
+        lines.push('**Detection evidence**');
+        lines.push('');
+        vc.signals.forEach((f) => lines.push(`- **${f.label}** (${f.strength} evidence) — ${f.detail}`));
+        lines.push('');
+      }
     }
 
     lines.push('### Content strengths & weaknesses');
@@ -870,6 +929,28 @@ function exportPdf(data, scoreResult) {
         ['Location', bc.locality], ['Telephone', bc.telephone],
         ['Social profiles', bc.socialProfiles && bc.socialProfiles.length ? bc.socialProfiles.join(', ') : null],
       ].filter(([, v]) => v));
+    }
+
+    if (insights.aiCopy && insights.aiCopy.available) {
+      const ac = insights.aiCopy;
+      subheading(`AI copy signals — ${ac.displayScore}/100, ${ac.band}`);
+      paragraph(`${ac.familyCount} tells found across ${ac.proseWords} words of prose${ac.penalty ? `, costing ${ac.penalty} AI Visibility points` : ', no deduction'}. Higher is better. Matched against the surface tells catalogued in Wikipedia's "Signs of AI writing". No detector can prove authorship — the evidence is listed so it can be judged.`, 8.5, COLOR.muted);
+      if (ac.families.length) {
+        ac.families.forEach((f) => bullet(`${f.label} (-${f.points}) — ${f.detail}${f.samples && f.samples.length ? ` Evidence: ${f.samples.join('; ')}` : ''}`));
+      } else {
+        bullet('None of the tracked AI writing patterns fired on this page.');
+      }
+      spacer(6);
+    }
+
+    if (insights.vibeCode) {
+      const vc = insights.vibeCode;
+      subheading(`Vibe-code detection — ${vc.buildScore}/100 build quality; verdict ${vc.band} (${vc.score}/100 confidence)`);
+      paragraph(`${vc.builders.length ? `Builder: ${vc.builders.map((b) => b.name).join(', ')}. ` : ''}${vc.servedWords != null ? `A non-JavaScript crawler sees ${vc.servedWords} of ${vc.renderedWords} words. ` : ''}An AI app-builder is not itself an SEO fault — only the faults below deduct${vc.penalty ? ` (${vc.penalty} AI Visibility points)` : ' (none here)'}.`, 8.5, COLOR.muted);
+      if (vc.faults.length) vc.faults.forEach((f) => bullet(`${f.label} (-${f.points}) — ${f.detail}`));
+      else bullet('No generated-site faults — whatever built this page, it did not leave the usual visibility problems behind.');
+      if (vc.signals.length) vc.signals.slice(0, 8).forEach((f) => bullet(`Evidence: ${f.label} (${f.strength}) — ${f.detail}`));
+      spacer(6);
     }
 
     subheading('Content strengths');

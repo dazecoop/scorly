@@ -168,25 +168,77 @@ async function scorlyCheckWwwRedirect(url, ms) {
 }
 
 // Reads a few security-relevant response headers that page-context JS can
-// never see (document/location expose no header API). A second request to
-// the same URL — cheap, and the only way to get at this data from an extension.
-async function scorlyFetchSecurityHeaders(url, ms) {
+// never see (document/location expose no header API), plus the HTML as it
+// was actually served. A second request to the same URL — cheap, and the
+// only way to get at this data from an extension.
+//
+// The served markup matters on its own: the in-page analyzer reads the DOM
+// *after* JavaScript has run, so a client-rendered app looks fully populated
+// to it while a crawler that does not execute scripts sees whatever is in
+// this response. Comparing the two is the only way to tell the difference,
+// and it is the single most consequential trait of a generated SPA.
+async function scorlyFetchServedDocument(url, ms, maxBytes = 600000) {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), ms);
   try {
     const res = await fetch(url, { signal: ctrl.signal, cache: 'no-store' });
-    try { if (res.body) await res.body.cancel(); } catch (e) { /* ignore */ }
+    let html = '';
+    try { html = (await res.text()).slice(0, maxBytes); } catch (e) { /* ignore */ }
     return {
-      hsts: res.headers.get('strict-transport-security'),
-      csp: res.headers.get('content-security-policy'),
-      xContentTypeOptions: res.headers.get('x-content-type-options'),
-      xFrameOptions: res.headers.get('x-frame-options'),
+      headers: {
+        hsts: res.headers.get('strict-transport-security'),
+        csp: res.headers.get('content-security-policy'),
+        xContentTypeOptions: res.headers.get('x-content-type-options'),
+        xFrameOptions: res.headers.get('x-frame-options'),
+      },
+      served: scorlyDescribeServedHtml(html, res),
     };
   } catch (e) {
     return null;
   } finally {
     clearTimeout(timer);
   }
+}
+
+// Strips the served HTML down to the text and metadata a non-executing
+// crawler would come away with. Tag-stripping with regexes is crude, but it
+// only has to produce a word count that is right to within a few percent —
+// the question being asked is "nearly nothing, or a real page?".
+function scorlyDescribeServedHtml(html, res) {
+  if (!html) return null;
+  const head = html.slice(0, 200000);
+  const stripped = html
+    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<template[\s\S]*?<\/template>/gi, ' ')
+    .replace(/<!--[\s\S]*?-->/g, ' ')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&(?:nbsp|amp|lt|gt|quot|#\d+);/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  const generatorMatch = head.match(/<meta[^>]+name=["']generator["'][^>]+content=["']([^"']+)["']/i) ||
+    head.match(/<meta[^>]+content=["']([^"']+)["'][^>]+name=["']generator["']/i);
+  // Deployment platform, from the headers only a server can set.
+  const platform = (() => {
+    const h = (n) => { try { return res.headers.get(n); } catch (e) { return null; } };
+    if (h('x-vercel-id') || h('x-vercel-cache')) return 'Vercel';
+    if (h('x-nf-request-id')) return 'Netlify';
+    if (h('x-railway-request-id')) return 'Railway';
+    if (/cloudflare/i.test(h('server') || '')) return 'Cloudflare';
+    if (/^Fly/i.test(h('server') || '')) return 'Fly.io';
+    if (h('x-render-origin-server')) return 'Render';
+    return h('server') || null;
+  })();
+  return {
+    bytes: html.length,
+    words: stripped ? stripped.split(/\s+/).filter(Boolean).length : 0,
+    generator: generatorMatch ? generatorMatch[1].slice(0, 120) : null,
+    platform,
+    poweredBy: (() => { try { return res.headers.get('x-powered-by'); } catch (e) { return null; } })(),
+    hasH1: /<h1[\s>]/i.test(html),
+    titleLength: (() => { const m = head.match(/<title[^>]*>([\s\S]*?)<\/title>/i); return m ? m[1].trim().length : 0; })(),
+    rootOnly: /<(?:div|main)[^>]+id=["'](?:root|app|__next|__nuxt)["'][^>]*>\s*<\/(?:div|main)>/i.test(html),
+  };
 }
 
 // Does the site serve a real 404 for a URL that cannot exist? A 200 here
@@ -330,13 +382,13 @@ async function scorlyAnalyzeTab(tabId, { onPartial } = {}) {
   let origin;
   try { origin = new URL(data.url).origin; } catch (e) { origin = null; }
 
-  const [robotsTxtBody, sitemapXml, faviconOk, linkCheck, wwwRedirect, securityHeaders, llmsTxt, notFoundPage, assetCheck] = await Promise.all([
+  const [robotsTxtBody, sitemapXml, faviconOk, linkCheck, wwwRedirect, servedDoc, llmsTxt, notFoundPage, assetCheck] = await Promise.all([
     origin ? scorlyFetchText(origin + '/robots.txt', 4000) : Promise.resolve(null),
     origin ? scorlyFetchOk(origin + '/sitemap.xml', 4000) : Promise.resolve(false),
     scorlyCheckFavicon(data.favicon),
     scorlyCheckInternalLinks(data),
     origin ? scorlyCheckWwwRedirect(data.url, 4000) : Promise.resolve(null),
-    (origin && !data.isLocalhost) ? scorlyFetchSecurityHeaders(data.url, 4000) : Promise.resolve(null),
+    origin ? scorlyFetchServedDocument(data.url, 6000) : Promise.resolve(null),
     origin ? scorlyFetchOk(origin + '/llms.txt', 4000) : Promise.resolve(false),
     origin ? scorlyCheck404Page(origin, 5000) : Promise.resolve(null),
     scorlyCheckAssets(data),
@@ -351,7 +403,10 @@ async function scorlyAnalyzeTab(tabId, { onPartial } = {}) {
   data.faviconOk = faviconOk;
   data.linkCheck = linkCheck;
   data.wwwRedirect = wwwRedirect;
-  data.securityHeaders = securityHeaders;
+  // The security headers are meaningless on localhost (no TLS, no CDN), but
+  // the served-HTML read is just as useful there as anywhere.
+  data.securityHeaders = (servedDoc && !data.isLocalhost) ? servedDoc.headers : null;
+  data.servedHtml = servedDoc ? servedDoc.served : null;
   return data;
 }
 

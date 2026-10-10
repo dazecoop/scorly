@@ -471,6 +471,35 @@ function scorlyBuildDiff(snapA, snapB, scoreA, scoreB) {
     ],
   });
 
+  // AI copy / vibe code. Both sides are computed from the saved snapshots, so
+  // an older snapshot (captured before these fields existed) yields null and
+  // the rows simply read as "not captured" rather than as a regression.
+  const copyA = scorlyComputeAiCopy(a);
+  const copyB = scorlyComputeAiCopy(b);
+  const vibeA = scorlyComputeVibeCode(a);
+  const vibeB = scorlyComputeVibeCode(b);
+  sections.push({
+    id: 'aicopy',
+    label: 'AI Copy & Vibe Code',
+    rows: [
+      scorlyNumRow('AI copy score', copyA && copyA.available ? copyA.displayScore : null, copyB && copyB.available ? copyB.displayScore : null, { unit: '/100', betterWhen: 'higher' }),
+      scorlyValueRow('AI copy verdict', copyA && copyA.band, copyB && copyB.band),
+      scorlyNumRow('Prose words measured', copyA && copyA.proseWords, copyB && copyB.proseWords),
+      scorlySetRow('AI writing tells', (copyA && copyA.families) || [], (copyB && copyB.families) || [],
+        (f) => f.key, (f) => `${f.label} (−${f.points})`),
+      scorlyNumRow('AI Visibility deduction (copy)', copyA && copyA.penalty, copyB && copyB.penalty, { unit: ' pts', betterWhen: 'lower' }),
+      scorlyNumRow('Build quality score', vibeA && vibeA.buildScore, vibeB && vibeB.buildScore, { unit: '/100', betterWhen: 'higher' }),
+      scorlyNumRow('Vibe-code confidence', vibeA && vibeA.score, vibeB && vibeB.score, { unit: '/100', note: 'a verdict on the toolchain, not a fault — neither direction is better' }),
+      scorlySetRow('Builder fingerprints', (vibeA && vibeA.builders) || [], (vibeB && vibeB.builders) || [],
+        (x) => x.name, (x) => x.name),
+      scorlySetRow('Generated-site faults', (vibeA && vibeA.faults) || [], (vibeB && vibeB.faults) || [],
+        (f) => f.label, (f) => `${f.label} (-${f.points})`),
+      scorlyNumRow('Words in served HTML', vibeA && vibeA.servedWords, vibeB && vibeB.servedWords, { betterWhen: 'higher', note: 'what a crawler sees before JavaScript runs' }),
+      scorlyNumRow('AI Visibility deduction (vibe code)', vibeA && vibeA.penalty, vibeB && vibeB.penalty, { unit: ' pts', betterWhen: 'lower' }),
+    ],
+    hint: 'The two scores read higher-is-better like the rest of the report. Vibe-code confidence is a verdict on the toolchain rather than a fault, so neither direction is better there. Neither detection can prove how a page was made — they count surface patterns and name the evidence.',
+  });
+
   sections.push({
     id: 'perf',
     label: 'Performance',

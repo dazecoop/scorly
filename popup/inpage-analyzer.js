@@ -638,6 +638,371 @@ async function scorlyInPageAnalyze() {
   };
   const freshness = { copyrightYear, latestDate, dateCandidateCount: dateCandidates.length };
 
+  // ---------- AI-written copy signals ----------
+  // Surface tells of unedited LLM prose, taken from Wikipedia's "Signs of AI
+  // writing" catalogue (WikiProject AI Cleanup) — the same list the
+  // humanizer guidance is built on. Every signal here is a literal
+  // string/pattern count over the page's own visible text: nothing is sent
+  // anywhere and no model is involved. Scoring (scoring.js) deliberately
+  // requires a CLUSTER of independent families before it penalises anything,
+  // because that source is explicit that single tells — one em dash, curly
+  // quotes, a lone "however" — mean nothing on their own.
+  const aiCopy = (() => {
+    // Prose only: headings, paragraphs, list items and quotes. Nav labels,
+    // button text and table cells are UI chrome and would skew the rates.
+    const proseBlocks = textBlocks.filter((b) => /^(p|li|blockquote|h[1-6]|dd)$/.test(b.tag));
+    const prose = proseBlocks.map((b) => b.text).join('\n');
+    const proseWords = prose ? prose.split(/\s+/).filter(Boolean).length : 0;
+    // Per 1,000 words, so a long page is not penalised for simply being long.
+    const per1k = (n) => (proseWords ? Math.round((n / proseWords) * 10000) / 10 : 0);
+    const countMatches = (re) => { const m = prose.match(re); return m ? m.length : 0; };
+    // Collects which terms from a list actually hit, so the UI can show the
+    // evidence rather than an unexplained number.
+    const hitTerms = (terms) => {
+      const hits = [];
+      let total = 0;
+      terms.forEach((t) => {
+        // A term containing ".{" is already a deliberate pattern (a formula
+        // with a variable middle, e.g. "from X to Y, we") — leave it raw.
+        const body = /\.\{/.test(t) ? t : t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const re = new RegExp('\\b' + body.replace(/ /g, '\\s+') + '\\b', 'gi');
+        const n = countMatches(re);
+        if (n) { total += n; hits.push({ term: t, count: n }); }
+      });
+      hits.sort((a, b) => b.count - a.count);
+      return { total, hits: hits.slice(0, 12) };
+    };
+    // Like countMatches, but keeps a few de-duplicated examples so the UI can
+    // show the actual sentences rather than an unexplained tally — these
+    // patterns are judgement calls and the reader has to be able to check them.
+    const sampleMatches = (re, max) => {
+      const m = prose.match(re) || [];
+      const samples = [];
+      m.forEach((raw) => {
+        const clean = raw.replace(/\s+/g, ' ').trim().slice(0, 100);
+        if (!samples.some((x) => x.toLowerCase() === clean.toLowerCase())) samples.push(clean);
+      });
+      return { total: m.length, samples: samples.slice(0, max || 6) };
+    };
+
+    // §14 — em/en dashes used as punctuation (not numeric ranges, not hyphens).
+    const dashMatches = prose.match(/[^\d\s]\s*[—–]\s*[^\d\s]|\s--\s/g) || [];
+    // §19 — curly quotes. On their own these mean nothing (every CMS curls
+    // quotes automatically); they only count inside a cluster.
+    const curlyQuotes = countMatches(/[\u201c\u201d\u2018\u2019]/g);
+
+    // §7 — the words measurably over-represented in post-2023 text.
+    const vocab = hitTerms([
+      'delve', 'delves', 'delving', 'tapestry', 'testament', 'underscore', 'underscores', 'underscoring',
+      'pivotal', 'intricate', 'intricacies', 'showcase', 'showcases', 'showcasing', 'vibrant',
+      'foster', 'fosters', 'fostering', 'garner', 'garnered', 'interplay', 'realm', 'myriad', 'plethora',
+      'meticulous', 'meticulously', 'holistic', 'paradigm', 'synergy', 'seamless', 'seamlessly',
+      'leverage', 'leveraging', 'elevate', 'elevating', 'unlock', 'unlocking', 'harness', 'harnessing',
+      'embark', 'bustling', 'nestled', 'robust', 'crucial', 'cutting-edge', 'ever-evolving',
+      'game-changer', 'unparalleled', 'transformative', 'multifaceted', 'nuanced', 'profound',
+      'navigate', 'navigating', 'resonate', 'resonates', 'curated', 'bespoke', 'invaluable',
+    ]);
+
+    // §§1,4,6,12,27,28,32 — the multi-word formulas. A phrase hit is much
+    // stronger evidence than a single word, so these are weighted higher.
+    const phrases = hitTerms([
+      'stands as a testament', 'serves as a testament', 'is a testament to',
+      'plays a crucial role', 'plays a vital role', 'plays a pivotal role', 'plays a key role',
+      'in today\u2019s fast-paced', 'in today\'s fast-paced', 'in today\u2019s digital', 'in today\'s digital',
+      'in the ever-evolving', 'ever-evolving landscape', 'the digital landscape', 'evolving landscape',
+      'when it comes to', 'it is important to note', 'it\u2019s important to note', 'it\'s important to note',
+      'it is worth noting', 'needless to say', 'rest assured', 'look no further',
+      'let\u2019s dive in', 'let\'s dive in', 'let us dive', 'let\u2019s explore', 'let\'s explore',
+      'let\u2019s break', 'let\'s break', 'here\u2019s what you need to know', 'here\'s what you need to know',
+      'without further ado', 'in conclusion', 'in summary', 'to sum up',
+      'navigating the complexities', 'unlock the potential', 'unlock the power', 'unleash the power',
+      'take your .{0,20} to the next level', 'at its core', 'the real question is',
+      'the world of', 'a wide range of', 'a myriad of', 'a plethora of',
+      'whether you\u2019re a', 'whether you\'re a',
+      'in the realm of', 'the key to', 'is key to', 'commitment to excellence',
+      'we understand that', 'designed to meet your', 'tailored to your',
+      'look no further than', 'the heart of', 'deeply rooted', 'indelible mark',
+      'marking a pivotal', 'setting the stage for', 'reflects a broader', 'reflecting a broader',
+      'faces several challenges', 'despite these challenges', 'the future looks bright',
+      'exciting times', 'step in the right direction', 'memories to last a lifetime',
+    ]);
+
+    // §§20,21 — chatbot correspondence and knowledge-cutoff text pasted
+    // straight into the page. Unlike everything else here these are close to
+    // conclusive on their own: no human writes them into their own copy.
+    const artifacts = hitTerms([
+      'as an ai language model', 'as an ai model', 'i\u2019m sorry, but i cannot', 'i\'m sorry, but i cannot',
+      'i cannot browse the internet', 'i do not have access to real-time',
+      'i hope this helps', 'let me know if you', 'would you like me to', 'want me to',
+      'should i continue', 'certainly! here', 'of course! here', 'here\u2019s a draft', 'here\'s a draft',
+      'up to my last training', 'as of my last update', 'as of my knowledge cutoff',
+      'my training data', 'while specific details are limited', 'while specific details about',
+      'based on available information', 'is not publicly available', 'maintains a low profile',
+      'certainly! below', 'sure! here\u2019s', 'sure! here\'s', 'feel free to ask',
+      'insert .{0,20} here', 'your company name', 'lorem ipsum',
+    ]);
+
+    // §9 — negative parallelism ("it's not just X, it's Y").
+    const negParallel = countMatches(/\b(?:it(?:\u2019|')?s|that(?:\u2019|')?s|this is)\s+not\s+(?:just|merely|only)\b/gi) +
+      countMatches(/\bnot\s+only\b[^.!?]{0,80}\bbut\s+(?:also\b)?/gi) +
+      countMatches(/\b(?:is|are)\s+more\s+than\s+just\b/gi);
+
+    // §8 — copula avoidance: elaborate verbs standing in for "is"/"are".
+    const copula = hitTerms(['serves as', 'serves as a', 'stands as', 'boasts a', 'boasts an', 'boasts over', 'represents a shift', 'marks a shift']);
+
+    // §3 — participle tails: a comma followed by an "-ing" analysis verb,
+    // the formula LLMs use to bolt fake depth onto the end of a sentence.
+    const participleTails = countMatches(/,\s+(?:highlighting|underscoring|emphasizing|emphasising|ensuring|reflecting|symbolizing|symbolising|contributing to|cultivating|fostering|encompassing|showcasing|demonstrating|solidifying|cementing|paving the way)\b/gi);
+
+    // §5 — vague attribution with no named source.
+    const weasel = hitTerms(['industry reports', 'observers have', 'experts argue', 'experts believe', 'experts say', 'studies suggest', 'research shows that', 'some critics argue', 'it is believed that', 'many believe']);
+
+    // §16 — inline-header vertical lists: "**Label:** sentence" as markup.
+    let inlineHeaderItems = 0;
+    document.querySelectorAll('li, p').forEach((node) => {
+      const first = node.firstElementChild;
+      if (!first || !/^(strong|b)$/i.test(first.tagName)) return;
+      const label = textOf(first);
+      if (!label || label.length > 40) return;
+      const rest = textOf(node).slice(label.length).trim();
+      if (/^[:\u2013\u2014-]/.test(rest) && rest.length > 20) inlineHeaderItems++;
+    });
+
+    // §18 — emoji decorating headings, and §17 — Title Case headings.
+    const EMOJI_RE = /[\u2600-\u27bf]|[\u{1f300}-\u{1faff}]|[\u{1f000}-\u{1f2ff}]/u;
+    let emojiHeadings = 0, titleCaseHeadings = 0, headingsChecked = 0;
+    headingList.forEach((h) => {
+      const t = h.text || '';
+      if (!t) return;
+      if (EMOJI_RE.test(t)) emojiHeadings++;
+      const words = t.split(/\s+/).filter((w) => /^[A-Za-z]/.test(w));
+      if (words.length >= 4) {
+        headingsChecked++;
+        const minor = /^(a|an|the|and|or|but|for|nor|of|to|in|on|at|by|with|from|as|is|vs)$/i;
+        const capped = words.filter((w, i) => i === 0 || minor.test(w) || /^[A-Z]/.test(w)).length;
+        if (capped === words.length && words.filter((w) => /^[A-Z]/.test(w)).length >= words.length - 1) titleCaseHeadings++;
+      }
+    });
+
+    // §31 / "Signs of human writing" — LLM prose holds an even, mid-length
+    // cadence; real writing alternates short and long. Measured as the
+    // coefficient of variation of sentence length (low = suspiciously even).
+    let sentenceCv = null;
+    const proseSentences = prose.split(/[.!?]+(?:\s|$)/).map((s) => s.trim().split(/\s+/).filter(Boolean).length).filter((n) => n > 2);
+    if (proseSentences.length >= 12) {
+      const mean = proseSentences.reduce((a, b) => a + b, 0) / proseSentences.length;
+      const variance = proseSentences.reduce((a, b) => a + (b - mean) * (b - mean), 0) / proseSentences.length;
+      sentenceCv = mean > 0 ? Math.round((Math.sqrt(variance) / mean) * 100) / 100 : null;
+    }
+
+    // §10 — the rule of three. Counts both the Oxford-comma form ("X, Y, and
+    // Z") and the British form without it ("Straight edges, smooth ceilings
+    // and neat skylight reveals"), which is the shape that actually dominates
+    // UK marketing copy and would be missed by an Oxford-comma-only pattern.
+    // The auxiliary-verb exclusions are what stop a parenthetical aside from
+    // reading as a list: "houses in south Bristol, mostly BS3 and BS4, and
+    // have done since 1998" is one clause with an aside, not a triad.
+    const AUX = '(?!(?:have|has|had|is|are|was|were|do|does|did|will|would|can|could|should|then|so|but|which|who)\\b)';
+    const ITEM = AUX + "[A-Za-z][\\w'-]*(?:\\s+[\\w'-]+){0,3}";
+    const triadRes = sampleMatches(new RegExp('\\b' + ITEM + ',\\s+' + ITEM + ',?\\s+and\\s+' + ITEM + '\\b', 'g'));
+    const triads = triadRes.total;
+    // The same formula applied to verbs — "We plaster, skim and finish…" —
+    // which reads as a separate tic because the subject is reused and only
+    // the verb list changes. Counted separately so a page full of them is not
+    // double-penalised by the generic triad pattern above.
+    const verbTriadRes = sampleMatches(/\b(?:We|They|It|You|Our\s+\w+|The\s+\w+)\s+[a-z]+(?:s|ed|ing)?(?:\s+[\w'-]+){0,3},\s+[a-z]+(?:s|ed|ing)?(?:\s+[\w'-]+){0,3},?\s+and\s+[a-z]+(?:s|ed|ing)?\b/g, 4);
+
+    // §12 — false ranges: "from X to Y" where X and Y are not two points on
+    // any real scale ("from a small patch to a whole room"). Numeric, date
+    // and price ranges are genuine and excluded. One of these is ordinary
+    // English; several on one page is one of the most reliable tells there is,
+    // so the examples are kept for the reader to judge.
+    // The capital-letter exclusions on the endpoints matter: "from London to
+    // Brighton" and "from June to August" are real ranges between real
+    // points, and flagging them would bury the signal in false positives.
+    // "from" is matched in both cases explicitly rather than with the /i
+    // flag, which would also fold [A-Z] in the exclusions and reject
+    // everything.
+    const falseRangeRes = sampleMatches(/\b[Ff]rom\s+(?![\d£$€A-Z])[a-z][\w'-]*(?:\s+[\w'-]+){0,4}\s+(?:all\s+the\s+way\s+)?to\s+(?![\d£$€A-Z])[a-z][\w'-]*(?:\s+[\w'-]+){0,4}\b/g);
+
+    return {
+      proseWords,
+      emDashes: dashMatches.length,
+      emDashPer1k: per1k(dashMatches.length),
+      curlyQuotes,
+      vocabCount: vocab.total,
+      vocabPer1k: per1k(vocab.total),
+      vocabHits: vocab.hits,
+      phraseCount: phrases.total,
+      phraseHits: phrases.hits,
+      artifactCount: artifacts.total,
+      artifactHits: artifacts.hits,
+      negParallel,
+      copulaCount: copula.total,
+      copulaHits: copula.hits,
+      participleTails,
+      weaselCount: weasel.total,
+      weaselHits: weasel.hits,
+      inlineHeaderItems,
+      emojiHeadings,
+      titleCaseHeadings,
+      headingsChecked,
+      sentenceCv,
+      triads,
+      triadsPer1k: per1k(triads),
+      triadSamples: triadRes.samples,
+      verbTriads: verbTriadRes.total,
+      verbTriadSamples: verbTriadRes.samples,
+      falseRanges: falseRangeRes.total,
+      falseRangeSamples: falseRangeRes.samples,
+    };
+  })();
+
+  // ---------- "Vibe coded" signals ----------
+  // Fingerprints of a page generated by an AI app-builder (Lovable, v0,
+  // Bolt, Replit, GPT Engineer…) together with the traits that actually cost
+  // such a page visibility: a client-rendered shell with no crawlable text,
+  // placeholder metadata, generated-boilerplate copy and no semantic markup.
+  // Scoring keeps those two things apart on purpose — a builder badge is not
+  // itself an SEO fault, so only the consequences carry a penalty.
+  const vibeCode = (() => {
+    const html = document.documentElement.outerHTML;
+    const htmlHead = html.slice(0, 400000);
+    const scriptSrcs = Array.from(document.scripts).map((s) => s.src || '').filter(Boolean);
+    const allUrls = scriptSrcs.concat(resourceUrls);
+    const generator = metaContent('meta[name="generator" i]') || '';
+
+    // --- Builder fingerprints (which tool, and what gave it away) ---
+    const builders = [];
+    const flag = (name, evidence) => {
+      if (!builders.some((b) => b.name === name)) builders.push({ name, evidence });
+    };
+    const inUrls = (re) => allUrls.some((u) => re.test(u));
+    if (/lovable/i.test(generator) || inUrls(/lovable\.(dev|app)|gptengineer\.js|cdn\.gpteng\.co/i) ||
+        document.querySelector('[class*="lovable" i], [id*="lovable" i], a[href*="lovable.dev"]')) {
+      flag('Lovable / GPT Engineer', 'gptengineer script, lovable.dev asset or badge link');
+    }
+    if (/\bv0\b|vercel v0/i.test(generator) || document.querySelector('[data-v0-t], [data-v0]') || inUrls(/v0\.dev|v0\.app/i)) {
+      flag('Vercel v0', 'data-v0 attribute, v0.dev asset or generator tag');
+    }
+    if (/bolt\.new|stackblitz/i.test(generator) || inUrls(/bolt\.new|stackblitz\.io/i) || document.querySelector('a[href*="bolt.new"]')) {
+      flag('Bolt.new / StackBlitz', 'bolt.new asset, badge link or generator tag');
+    }
+    if (/replit/i.test(generator) || inUrls(/replit\.(com|dev|app)|repl\.co/i) || /\.repl\.co$|\.replit\.(dev|app)$/i.test(location.hostname)) {
+      flag('Replit', 'replit host or asset');
+    }
+    if (/\b(base44|famous\.ai|tempo\.new|softr|a0\.dev|rork|create\.xyz|bubble)\b/i.test(generator) || inUrls(/base44|famous\.ai|tempo\.new|a0\.dev|create\.xyz/i)) {
+      flag('AI app builder', 'generator tag or asset from a known AI builder');
+    }
+    if (/claude|chatgpt|gpt-4|copilot|cursor|windsurf/i.test(generator)) {
+      flag('AI coding assistant', 'generator meta tag names an LLM: "' + generator.slice(0, 60) + '"');
+    }
+
+    // --- Stack / UI-kit markers (the default vibe-code toolchain) ---
+    const radixEls = document.querySelectorAll('[data-radix-collection-item], [data-radix-scroll-area-viewport], [data-radix-popper-content-wrapper], [data-state][data-orientation], [data-slot]').length;
+    const lucideIcons = document.querySelectorAll('svg.lucide, svg[class*="lucide-"]').length;
+    let shadcnVars = false;
+    try {
+      const rootStyle = getComputedStyle(document.documentElement);
+      shadcnVars = !!(rootStyle.getPropertyValue('--radius').trim() &&
+        (rootStyle.getPropertyValue('--primary').trim() || rootStyle.getPropertyValue('--muted-foreground').trim()));
+    } catch (e) { /* ignore */ }
+    const isNext = !!document.getElementById('__next') || /\/_next\/static\//.test(html);
+    const isViteSpa = !!document.querySelector('script[type="module"][src*="/assets/index-"], script[type="module"][src^="/src/main"]');
+    const framework = isNext ? 'Next.js' : isViteSpa ? 'Vite SPA' : /__nuxt/i.test(html) ? 'Nuxt' : /astro-island|astro-/i.test(html) ? 'Astro' : null;
+
+    // --- Tailwind "utility soup": how many classes per element ---
+    let classedEls = 0, classTotal = 0, heavyClassEls = 0, arbitraryValues = 0;
+    document.querySelectorAll('div, section, span, a, button, p, h1, h2, h3, li').forEach((node) => {
+      const cls = (node.getAttribute('class') || '').trim();
+      if (!cls) return;
+      const n = cls.split(/\s+/).length;
+      classedEls++;
+      classTotal += n;
+      if (n >= 10) heavyClassEls++;
+      if (/\[[^\]]+\]/.test(cls)) arbitraryValues++;
+    });
+    const avgClassesPerEl = classedEls ? Math.round((classTotal / classedEls) * 10) / 10 : 0;
+    const heavyClassPct = classedEls ? Math.round((heavyClassEls / classedEls) * 100) : 0;
+    const tailwindCdn = /cdn\.tailwindcss\.com/.test(html);
+
+    // --- Generated-template design clichés ---
+    const countClass = (frag) => document.querySelectorAll('[class*="' + frag + '"]').length;
+    const backdropBlur = countClass('backdrop-blur');
+    const gradients = countClass('bg-gradient-to') + countClass('bg-linear-to');
+    const gradientText = countClass('bg-clip-text');
+    const designCliches = { backdropBlur, gradients, gradientText };
+
+    // --- AI-written HTML comments: Title Case section labels ---
+    // "<!-- Hero Section -->", "<!-- Features Grid -->" — the way a model
+    // labels the blocks it just emitted. Also catches leftover JSX comments.
+    const commentMatches = htmlHead.match(/<!--[\s\S]{0,120}?-->/g) || [];
+    let labelComments = 0;
+    commentMatches.forEach((c) => {
+      const body = c.replace(/^<!--|-->$/g, '').trim();
+      if (!body || body.length > 60) return;
+      if (/^(\/?[a-z-]+|\[if|\/\*)/.test(body)) return; // closing-tag notes, IE conditionals
+      if (/^[A-Z][A-Za-z0-9]*(?:\s+[A-Za-z0-9/&]+){0,5}$/.test(body) &&
+          /\b(section|hero|header|footer|nav|navigation|cta|features?|testimonials?|pricing|faq|about|contact|grid|card|banner|sidebar)\b/i.test(body)) {
+        labelComments++;
+      }
+    });
+    const jsxComments = (htmlHead.match(/\{\/\*/g) || []).length;
+
+    // --- Placeholder / default metadata that nobody renamed ---
+    const DEFAULT_TITLES = /^(vite(\s*\+\s*(react|vue|ts|svelte))*( app)?|react app|create next app|next\.js|my app|my website|untitled|document|index|home|app|website|landing page|new project|v0 app|lovable|lovable generated project|generated by .+)$/i;
+    const placeholderTitle = DEFAULT_TITLES.test(titleText.trim()) ? titleText.trim() : null;
+    const defaultFavicon = !!(favicon && /\/(vite|react|next|favicon-default|logo192|placeholder)\.(svg|ico|png)$/i.test(favicon));
+    const genericDescription = !!(descText && /^(generated (by|with)|created (by|with)|a (modern|simple|beautiful) .{0,40}(app|website|landing page)|lovable generated project|web site created using)/i.test(descText.trim()));
+
+    // --- Generated marketing copy and stock placeholders ---
+    const prose = textBlocks.map((b) => b.text).join('\n');
+    const GENERIC_COPY = [
+      /\btransform(?:ing)? your\b/i, /\brevolutioni[sz](?:e|ing)\b/i, /\bsupercharge\b/i,
+      /\bthe future of\b/i, /\ball-in-one\b/i, /\bpowered by ai\b/i, /\bnext-generation\b/i,
+      /\beffortlessly\b/i, /\b10x\b/i, /\bbuilt for (?:modern|teams|the future)\b/i,
+      /\bone platform\b/i, /\beverything you need\b/i, /\bjoin thousands of\b/i,
+      /\btrusted by (?:thousands|millions|\d[\d,+]*)\b/i, /\bno credit card required\b/i,
+      /\bget started (?:in (?:seconds|minutes)|for free|today)\b/i, /\bloved by\b/i,
+      /\bship faster\b/i, /\bbeautifully (?:designed|crafted)\b/i, /\bseamless experience\b/i,
+    ];
+    const genericCopyHits = [];
+    GENERIC_COPY.forEach((re) => { const m = prose.match(re); if (m) genericCopyHits.push(m[0]); });
+    const lorem = /\blorem ipsum\b|\bdolor sit amet\b/i.test(prose);
+    const placeholderCopy = /\b(your (?:company|brand|business|product|logo|name here)|company name|insert .{0,20} here|coming soon|placeholder text|example\.com|john doe|jane doe|feature (?:one|two|three)|card (?:title|description))\b/i.test(prose);
+    const genericCtas = (() => {
+      const labels = Array.from(document.querySelectorAll('a, button')).map((n) => textOf(n).toLowerCase());
+      const GENERIC = ['get started', 'learn more', 'try it free', 'start free trial', 'book a demo', 'sign up free', 'see how it works', 'explore now'];
+      return labels.filter((l) => GENERIC.includes(l)).length;
+    })();
+    const stockImages = (() => {
+      const hosts = [/images\.unsplash\.com/i, /pexels\.com/i, /placehold(?:er)?\.co/i, /picsum\.photos/i, /via\.placeholder\.com/i, /dicebear\.com/i, /loremflickr/i, /dummyimage/i];
+      return (images.list || []).filter((im) => im.src && hosts.some((h) => h.test(im.src))).length;
+    })();
+
+    return {
+      generator: generator || null,
+      builders,
+      framework,
+      clientRendered: !!(isViteSpa || (!isNext && framework === null && document.querySelector('#root, #app') && domSize < 2000 && scriptSrcs.length > 0 && paragraphCount <= 2)),
+      ui: { radixEls, lucideIcons, shadcnVars, tailwindCdn },
+      tailwind: { classedEls, avgClassesPerEl, heavyClassEls, heavyClassPct, arbitraryValues },
+      designCliches,
+      labelComments,
+      jsxComments,
+      placeholderTitle,
+      defaultFavicon,
+      genericDescription,
+      genericCopyHits: genericCopyHits.slice(0, 10),
+      lorem,
+      placeholderCopy,
+      genericCtas,
+      stockImages,
+      semanticLandmarks,
+      headingLevels: headingCounts,
+    };
+  })();
+
   const hostname = location.hostname;
   const isLocalhost = hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1' ||
     hostname.endsWith('.local') || /^192\.168\.|^10\.|^172\.(1[6-9]|2\d|3[0-1])\./.test(hostname);
@@ -711,6 +1076,8 @@ async function scorlyInPageAnalyze() {
     freshness,
     businessContext,
     hygiene,
+    aiCopy,
+    vibeCode,
     analyzedAt: new Date().toISOString(),
   };
 }

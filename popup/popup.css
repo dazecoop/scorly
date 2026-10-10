@@ -570,3 +570,54 @@ html, body { height: 600px; }
 .ai-fix-btn:disabled { cursor: default; opacity: 0.9; }
 .ai-fix-btn svg { width: 13px; height: 13px; flex-shrink: 0; }
 .ai-fix-hint { font-size: 10.5px; color: var(--text-muted); line-height: 1.4; }
+
+/* AI Copy Signals / Vibe-Code Detection panels. These two score risk rather
+   than quality, so the number is paired with a band label to say which way
+   round it reads. */
+.risk-head { display: flex; align-items: center; gap: 14px; margin: 2px 0 12px; }
+.risk-big { font-size: 30px; font-weight: 800; line-height: 1; min-width: 74px; text-align: center; }
+.risk-of { font-size: 13px; font-weight: 700; opacity: 0.55; }
+.risk-band { min-width: 0; }
+.risk-band-label { font-size: 13px; font-weight: 700; }
+.risk-band-sub { font-size: 11px; color: var(--text-muted); line-height: 1.45; margin-top: 2px; }
+.sig-list { display: flex; flex-direction: column; gap: 7px; }
+.sig-row { border: 1px solid var(--border); border-radius: 8px; padding: 9px 10px; }
+.sig-head { display: flex; align-items: center; gap: 8px; justify-content: space-between; }
+.sig-label { font-size: 12px; font-weight: 700; }
+.sig-weight { font-size: 10px; font-weight: 800; color: #fff; padding: 1px 6px; border-radius: 4px; flex-shrink: 0; }
+.sig-detail { font-size: 11px; color: var(--text-muted); line-height: 1.45; margin-top: 4px; }
+.sig-samples { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 7px; }
+.sig-chip { font-size: 10.5px; background: var(--accent-soft); color: var(--accent); padding: 3px 7px; border-radius: 5px; line-height: 1.35; }
+.sig-sub-title { font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-muted); margin: 14px 0 7px; }
+.sig-row .bar-track { margin-top: 7px; }
+
+/* AI Visibility breakdown bars. Buttons rather than divs because each one
+   scrolls to its section, so it has to be keyboard-reachable. They reuse the
+   Overview tab's .bar-row layout and only add the interaction affordances. */
+.vis-bars { gap: 2px; }
+button.vis-bar {
+  font: inherit; color: inherit; text-align: left; width: 100%;
+  background: none; border: 0; border-radius: 6px;
+  padding: 4px 6px; margin: 0 -6px; cursor: pointer;
+}
+/* Labels here are full phrases ("Machine readability", "Human-written copy"),
+   so they take the row's spare width and the track is fixed and narrower —
+   the opposite of the Overview tab's short category names. */
+button.vis-bar .bar-label { width: auto; flex: 1 1 auto; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+button.vis-bar .bar-track { flex: 0 0 200px; }
+button.vis-bar .bar-value { width: 38px; }
+button.vis-bar:hover { background: var(--accent-soft); }
+button.vis-bar:hover .bar-label { color: var(--accent); }
+button.vis-bar:focus-visible { outline: 2px solid var(--accent); outline-offset: -1px; }
+.bar-of { opacity: 0.5; font-weight: 600; }
+/* Smooth-scroll targets sit flush against the pane's top edge otherwise. */
+.panel-title[id] { scroll-margin-top: 8px; }
+/* Evidence strength, which feeds the vibe-code verdict rather than the score,
+   so it is deliberately neutral in colour — not a pass/fail signal. */
+.sig-weight.sig-strength-strong,
+.sig-weight.sig-strength-moderate,
+.sig-weight.sig-strength-weak {
+  background: var(--accent-soft); color: var(--accent); text-transform: uppercase; letter-spacing: 0.03em;
+}
+.sig-weight.sig-strength-moderate { opacity: 0.8; }
+.sig-weight.sig-strength-weak { opacity: 0.6; }

@@ -296,6 +296,19 @@ function initCountTiles() {
   });
 }
 
+// The AI Visibility breakdown bars double as the AI Insights tab's table of
+// contents: each one scrolls to the panel that explains it. Delegated on the
+// document because the tab's markup is rebuilt on every analysis, the same
+// reason initAiFixButtons is.
+function initInsightBars() {
+  document.addEventListener('click', (e) => {
+    const bar = e.target.closest('[data-scrollto]');
+    if (!bar) return;
+    const target = document.getElementById(bar.dataset.scrollto);
+    if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  });
+}
+
 function initExportButtons() {
   el('exportJson').addEventListener('click', () => { if (lastData) exportJson(lastData, lastScoreResult); });
   el('exportMd').addEventListener('click', () => { if (lastData) exportMarkdown(lastData, lastScoreResult); });
@@ -370,6 +383,7 @@ document.addEventListener('DOMContentLoaded', () => {
   initTabs();
   initPlatformSwitch();
   initCountTiles();
+  initInsightBars();
   initAiFixButtons();
   initExportButtons();
   initTheme();

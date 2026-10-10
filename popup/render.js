@@ -39,8 +39,20 @@ function scoreLabel(score) {
 
 const CATEGORY_LABELS = {
   technical: 'Technical', content: 'Content', perf: 'Perf', schema: 'Schema',
-  security: 'Security', mobile: 'Mobile', aiSeo: 'AI Visibility', eeat: 'E-E-A-T',
+  security: 'Security', mobile: 'Mobile', a11y: 'Accessibility', aiSeo: 'AI Visibility', eeat: 'E-E-A-T',
 };
+
+// Image sources for display. An inline data: URI can be tens of kilobytes of
+// base64 — printed raw it filled four pages of the PDF export — so it is
+// shown as its type and size instead. Shared by the popup and the exports.
+function displayImageSrc(src) {
+  if (!src) return '';
+  const m = /^data:([^;,]+)/i.exec(src);
+  if (!m) return src;
+  const comma = src.indexOf(',');
+  const bytes = /;base64/i.test(src.slice(0, comma)) ? Math.round((src.length - comma - 1) * 0.75) : src.length - comma - 1;
+  return `inline ${m[1]} (data URI, ${formatBytes(bytes)})`;
+}
 
 function statusIcon(status) {
   return status === 'pass' ? '✓' : status === 'warn' ? '!' : '✕';
@@ -164,6 +176,15 @@ function renderOverview(data, scoreResult, opts) {
   const PENDING_CATEGORIES = { technical: true };
   const barsHtml = Object.keys(CATEGORY_LABELS).map((key) => {
     const score = categoryScores[key];
+    // No score at all: a snapshot captured before this category existed.
+    if (score == null) {
+      return `
+      <div class="bar-row" title="Not captured on this snapshot — re-analyze to score it">
+        <div class="bar-label">${CATEGORY_LABELS[key]}</div>
+        <div class="bar-track"></div>
+        <div class="bar-value">—</div>
+      </div>`;
+    }
     if (pending && PENDING_CATEGORIES[key]) {
       // Mirrors the bottom progress bar (popup.js updates this fill on the
       // same trickle), in a neutral loading color until the score locks in.
@@ -251,6 +272,7 @@ function renderContentTab(data, scoreResult) {
     [c.sentenceCount, 'Sentences'],
     [c.avgSentenceLength + 'w', 'Avg sent. len'],
     [c.readability + '/100', 'Readability'],
+    ...(c.gradeLevel != null ? [[c.gradeLevel, 'Reading grade']] : []),
   ];
   const score = scoreResult.categoryScores.content;
   let html = '<div class="tile-grid">' + tiles.map(([v, l]) => `
@@ -269,6 +291,12 @@ function renderContentTab(data, scoreResult) {
     html += '<div class="keyword-chips">' + c.topKeywords.slice(0, 12).map((k) => `<span class="chip">${escapeHtml(k.word)} <b>${k.count}</b> (${k.pct}%)</span>`).join('') + '</div>';
   } else {
     html += '<p class="empty-note">Not enough text to extract keywords.</p>';
+  }
+
+  // Phrases say far more than single words about what the page targets.
+  if (c.topPhrases && c.topPhrases.length) {
+    html += '<div class="panel-title">Top Phrases</div>';
+    html += '<div class="keyword-chips">' + c.topPhrases.map((p) => `<span class="chip">${escapeHtml(p.phrase)} <b>${p.count}</b></span>`).join('') + '</div>';
   }
 
   html += '<div class="panel-title">Checks</div>' + renderGroupedChecks(scoreResult.categories.content);
@@ -361,6 +389,7 @@ function renderImagesTab(data) {
     <div class="tile"><div class="tile-num">${imgs.legacyFormat != null ? imgs.legacyFormat : '—'}</div><div class="tile-label">PNG/JPG/GIF</div></div>
     <div class="tile"><div class="tile-num">${imgs.missingDimensions != null ? imgs.missingDimensions : '—'}</div><div class="tile-label">No width/height</div></div>
     <div class="tile"><div class="tile-num">${imgs.lazyLoaded != null ? imgs.lazyLoaded : '—'}</div><div class="tile-label">Lazy-loaded</div></div>
+    ${imgs.decorative != null ? `<div class="tile"><div class="tile-num">${imgs.decorative}</div><div class="tile-label">Decorative (alt="")</div></div>` : ''}
   </div>`;
   if (!imgs.list.length) {
     html += `<div class="empty-state"><svg class="empty-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg><div>No images found</div></div>`;
@@ -380,13 +409,14 @@ function renderImagesTab(data) {
       if (img.distorted) flags.push('<span class="img-flag flag-warn">distorted</span>');
       if (img.format && ['png', 'jpg', 'gif', 'bmp'].includes(img.format)) flags.push('<span class="img-flag flag-warn">WebP/AVIF candidate</span>');
       if (img.hasExplicitSize === false) flags.push('<span class="img-flag flag-warn">no width/height</span>');
+      if (img.aboveFold && img.loading === 'lazy') flags.push('<span class="img-flag flag-warn">lazy above fold</span>');
       return `
       <div class="image-row">
         <div class="image-thumb" style="background-image:url('${(img.src || '').replace(/'/g, '%27')}')"></div>
         <div class="image-meta">
-          <div class="image-alt ${img.missing ? 'alt-missing' : 'alt-ok'}">${img.missing ? 'Missing alt' : escapeHtml(truncate(img.alt, 60))}</div>
+          <div class="image-alt ${img.missing ? 'alt-missing' : 'alt-ok'}">${img.missing ? 'Missing alt' : img.decorative ? '<em>Decorative (alt="")</em>' : escapeHtml(truncate(img.alt, 60))}</div>
           ${facts.length || flags.length ? `<div class="image-facts">${escapeHtml(facts.join(' · '))}${flags.length ? ' ' + flags.join(' ') : ''}</div>` : ''}
-          <div class="image-src">${escapeHtml(truncate(img.src || '', 70))}</div>
+          <div class="image-src">${escapeHtml(truncate(displayImageSrc(img.src), 70))}</div>
         </div>
       </div>`;
     }).join('') + '</div>';
@@ -594,6 +624,40 @@ function renderSecurityTab(data, scoreResult) {
   </div>`;
   html += '<div class="panel-title">Checks</div>' + renderGroupedChecks(scoreResult.categories.security);
   el('securityContent').innerHTML = html;
+}
+
+// ===================== ACCESSIBILITY =====================
+function renderA11yTab(data, scoreResult) {
+  const ax = data.a11y;
+  if (!ax) {
+    el('a11yContent').innerHTML = `<div class="empty-state"><svg class="empty-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg><div>Not captured on this snapshot — re-analyze the page to run the accessibility checks.</div></div>`;
+    return;
+  }
+  const c = ax.contrast;
+  const tiles = [
+    [`${c.checked - c.failing}/${c.checked}`, 'Contrast OK'],
+    [ax.forms.fields ? `${ax.forms.fields - ax.forms.unlabelled}/${ax.forms.fields}` : '—', 'Labelled fields'],
+    [ax.namelessButtons.count, 'Unnamed buttons'],
+    [ax.skipLink ? 'Yes' : 'No', 'Skip link'],
+    [ax.landmarks.main, '<main>'],
+    [ax.duplicateIds.count, 'Duplicate ids'],
+  ];
+  let html = '<div class="tile-grid">' + tiles.map(([v, l]) => `
+    <div class="tile"><div class="tile-num">${escapeHtml(String(v))}</div><div class="tile-label">${escapeHtml(l)}</div></div>
+  `).join('') + categoryScoreBox(scoreResult.categoryScores.a11y, 'ACCESSIBILITY SCORE') + '</div>';
+
+  // Each failing sample is drawn in its own colours, so the problem is
+  // visible rather than described.
+  if (c.samples.length) {
+    html += '<div class="panel-title">Lowest-contrast text</div><div class="link-list">' + c.samples.map((x) => `
+      <div class="link-row">
+        <div class="link-text"><span style="color:${escapeHtml(x.fg)};background:${escapeHtml(x.bg)};padding:1px 6px;border-radius:3px">${escapeHtml(x.text || '(text)')}</span></div>
+        <div class="link-href">${x.ratio}:1 — needs ${x.need}:1 · ${escapeHtml(x.fg)} on ${escapeHtml(x.bg)}</div>
+      </div>`).join('') + '</div>';
+  }
+  html += `<p class="checks-intro">Computed from the colours and markup the browser actually rendered. ${c.skipped ? `${c.skipped} text element(s) over images or gradients were skipped — their contrast cannot be read from styles alone. ` : ''}Automated checks catch roughly a third of accessibility problems; keyboard and screen-reader testing find the rest.</p>`;
+  html += '<div class="panel-title">Checks</div>' + renderGroupedChecks(scoreResult.categories.a11y);
+  el('a11yContent').innerHTML = html;
 }
 
 // ===================== OPEN GRAPH PREVIEW =====================
@@ -819,6 +883,7 @@ function renderInsightsTab(data, scoreResult, insights) {
       ['Location', bcx.locality],
       ['Telephone', bcx.telephone],
       ['Social profiles', bcx.socialProfiles && bcx.socialProfiles.length ? bcx.socialProfiles.join(', ') : null],
+      ['Review platforms', bcx.reviewPlatforms && bcx.reviewPlatforms.length ? bcx.reviewPlatforms.join(', ') : null],
     ].filter(([, v]) => v);
     html += rows.length ? rows.map(([l, v]) => `
       <div class="meta-card"><div class="meta-card-head"><span class="meta-card-label">${escapeHtml(l)}</span></div>

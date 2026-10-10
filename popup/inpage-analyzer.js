@@ -45,8 +45,28 @@ async function scorlyInPageAnalyze() {
     });
     return out;
   }
+  // textContent glues "team,<br>from" into "team,from" and runs a heading
+  // straight into the paragraph after it, which then reads as one sentence to
+  // every pattern below. innerText would separate them but also applies CSS
+  // text-transform (an uppercase-styled heading would come back in capitals),
+  // so this walks the text nodes itself and spaces out <br> and block edges.
+  const BLOCK_TAGS = new Set(['ADDRESS', 'ARTICLE', 'ASIDE', 'BLOCKQUOTE', 'BR', 'DD', 'DETAILS', 'DIV', 'DL', 'DT', 'FIGCAPTION', 'FIGURE', 'FOOTER', 'FORM', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'HEADER', 'HR', 'LI', 'MAIN', 'NAV', 'OL', 'P', 'PRE', 'SECTION', 'SUMMARY', 'TABLE', 'TD', 'TH', 'TR', 'UL']);
+  const SKIP_TEXT_TAGS = new Set(['SCRIPT', 'STYLE', 'TEMPLATE', 'NOSCRIPT']);
   function textOf(el) {
-    return (el && el.textContent || '').replace(/\s+/g, ' ').trim();
+    if (!el) return '';
+    const parts = [];
+    (function walk(node) {
+      for (let c = node.firstChild; c; c = c.nextSibling) {
+        if (c.nodeType === 3) parts.push(c.nodeValue);
+        else if (c.nodeType === 1 && !SKIP_TEXT_TAGS.has(c.tagName)) {
+          const block = BLOCK_TAGS.has(c.tagName);
+          if (block) parts.push(' ');
+          walk(c);
+          if (block) parts.push(' ');
+        }
+      }
+    }(el));
+    return parts.join('').replace(/\s+/g, ' ').trim();
   }
 
   // ---------- Meta ----------
@@ -86,6 +106,15 @@ async function scorlyInPageAnalyze() {
     headingTextCounts.set(key, (headingTextCounts.get(key) || 0) + 1);
   });
   const duplicateHeadingCount = Array.from(headingTextCounts.values()).filter((n) => n > 1).length;
+  // Skipped levels (an H2 followed directly by an H4). Going back up any
+  // number of levels is normal; only a jump down by more than one breaks the
+  // outline screen readers and engines build from the headings.
+  const headingSkips = [];
+  headingList.forEach((h, i) => {
+    if (i === 0) return;
+    const prev = headingList[i - 1].level;
+    if (h.level > prev + 1 && headingSkips.length < 10) headingSkips.push({ from: prev, to: h.level, text: h.text.slice(0, 80) });
+  });
 
   // ---------- Empty bold/strong tags ----------
   let emptyBoldCount = 0;
@@ -104,6 +133,15 @@ async function scorlyInPageAnalyze() {
       return ext === 'jpeg' ? 'jpg' : ext;
     } catch (e) { return null; }
   }
+  // Decoded byte size per image URL, from the resource timing buffer, so the
+  // oversized flag can ignore files too small for the extra pixels to matter.
+  const resourceBytes = new Map();
+  try {
+    performance.getEntriesByType('resource').forEach((r) => {
+      if (r.decodedBodySize) resourceBytes.set(r.name, r.decodedBodySize);
+    });
+  } catch (e) { /* ignore */ }
+  const viewportH = window.innerHeight || document.documentElement.clientHeight || 800;
   const imgEls = Array.from(document.querySelectorAll('img'));
   const imageList = imgEls.slice(0, 200).map((img) => {
     const alt = img.getAttribute('alt');
@@ -113,11 +151,17 @@ async function scorlyInPageAnalyze() {
     const renderedH = Math.round(rect.height);
     const naturalW = img.naturalWidth || 0;
     const naturalH = img.naturalHeight || 0;
+    const isDataUri = /^data:/i.test(src || '');
+    // Inline images have no resource entry; their size is the base64 payload.
+    const bytes = isDataUri ? Math.round((src.length - src.indexOf(',') - 1) * 0.75) : (resourceBytes.get(src) || null);
     // Oversized = intrinsic pixels are ≥2× what the layout slot needs even on
     // a 2× (retina) screen — the classic "shipping a 2400px hero into a 600px
-    // column" waste. Only judged once both sizes are known and non-trivial.
+    // column" waste. Only judged once both sizes are known and non-trivial,
+    // and never for files under ~10 KB, where the waste is a few hundred
+    // bytes (an inline 96px icon drawn at 24px is not worth a warning).
     const oversized = !!(naturalW && renderedW > 20 &&
-      naturalW >= renderedW * 2 * Math.min(2, window.devicePixelRatio || 1));
+      naturalW >= renderedW * 2 * Math.min(2, window.devicePixelRatio || 1) &&
+      !(bytes != null && bytes < 10240));
     // Distorted = the rendered box squashes/stretches the intrinsic aspect
     // ratio by more than ~15% (and CSS isn't letting object-fit absorb it).
     let distorted = false;
@@ -128,11 +172,22 @@ async function scorlyInPageAnalyze() {
         distorted = fit === 'fill';
       }
     }
+    // alt="" is how markup says "decorative, skip me" (an icon inside a link
+    // that already has a label), so only a missing attribute is a fault.
+    const decorative = alt !== null && alt.trim() === '';
+    const visible = rect.width > 0 && rect.height > 0;
+    const scrollTop = window.scrollY || 0;
+    const top = rect.top + scrollTop;
     return {
       distorted,
       src,
       alt: alt || '',
-      missing: !img.hasAttribute('alt') || img.getAttribute('alt').trim() === '',
+      missing: alt === null,
+      decorative,
+      bytes,
+      aboveFold: visible && top < viewportH,
+      belowFold: visible && top > viewportH * 1.2,
+      hasSrcset: img.hasAttribute('srcset') || !!(img.parentElement && img.parentElement.tagName === 'PICTURE' && img.parentElement.querySelector('source[srcset]')),
       naturalW,
       naturalH,
       renderedW,
@@ -153,6 +208,12 @@ async function scorlyInPageAnalyze() {
     distorted: imageList.filter((i) => i.distorted).length,
     legacyFormat: imageList.filter((i) => i.format && LEGACY_FORMATS.includes(i.format)).length,
     lazyLoaded: imageList.filter((i) => i.loading === 'lazy').length,
+    decorative: imageList.filter((i) => i.decorative).length,
+    // Delivery checks. "Large" = would cost real bytes on a phone: at least
+    // 600px wide intrinsically, or drawn wider than 400px.
+    lazyAboveFold: imageList.filter((i) => i.aboveFold && i.loading === 'lazy').length,
+    eagerBelowFold: imageList.filter((i) => i.belowFold && i.loading !== 'lazy' && !/^data:/i.test(i.src || '') && i.renderedW >= 100).length,
+    largeWithoutSrcset: imageList.filter((i) => !i.hasSrcset && !/^data:/i.test(i.src || '') && !/\.svg(\?|$)/i.test(i.src || '') && (i.naturalW >= 600 || i.renderedW >= 400)).length,
     list: imageList,
   };
 
@@ -186,6 +247,34 @@ async function scorlyInPageAnalyze() {
     else if (externalList.length < 300) externalList.push(entry);
   });
 
+  // In-page anchors (#section) that point at nothing, and tel:/mailto: links
+  // a phone or mail client cannot actually use. "#" and "#top" are the
+  // conventional scroll-to-top links and always resolve.
+  const brokenFragments = [];
+  const badContactLinks = [];
+  anchors.forEach((a) => {
+    const href = (a.getAttribute('href') || '').trim();
+    if (/^#./.test(href) && !/^#top$/i.test(href) && !/^#!/.test(href)) {
+      let id = href.slice(1);
+      try { id = decodeURIComponent(id); } catch (e) { /* keep raw */ }
+      if (!document.getElementById(id) && !document.getElementsByName(id).length && brokenFragments.indexOf(href) < 0) {
+        brokenFragments.push(href);
+      }
+    } else if (/^tel:/i.test(href)) {
+      const num = href.slice(4).split(/[;?]/)[0];
+      let decoded = num;
+      try { decoded = decodeURIComponent(num); } catch (e) { /* keep raw */ }
+      const digits = decoded.replace(/\D/g, '');
+      if (digits.length < 6 || digits.length > 15 || /[^\d\s+().\-]/.test(decoded)) badContactLinks.push(href);
+    } else if (/^mailto:/i.test(href)) {
+      const addrs = href.slice(7).split('?')[0];
+      let decoded = addrs;
+      try { decoded = decodeURIComponent(addrs); } catch (e) { /* keep raw */ }
+      // An empty mailto: (subject/body only) is a valid "compose" link.
+      if (decoded && !decoded.split(',').every((x) => /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(x.trim()))) badContactLinks.push(href);
+    }
+  });
+
   // ---------- Content ----------
   const bodyText = (document.body && document.body.innerText) ? document.body.innerText.trim() : '';
   const words = bodyText ? bodyText.split(/\s+/).filter(Boolean) : [];
@@ -205,16 +294,10 @@ async function scorlyInPageAnalyze() {
     if (word.endsWith('e') && count > 1) count--;
     return Math.max(1, count);
   }
-  let syllableTotal = 0;
-  const sampleWords = words.slice(0, 2000);
-  sampleWords.forEach((w) => { syllableTotal += countSyllables(w); });
+  // Readability (Flesch + grade) is computed further down, from prose
+  // blocks — it needs textBlocks.
   let readability = 0;
-  if (sentenceCount > 0 && sampleWords.length > 0) {
-    const wps = sampleWords.length / sentenceCount;
-    const spw = syllableTotal / sampleWords.length;
-    readability = Math.round(206.835 - 1.015 * wps - 84.6 * spw);
-    readability = Math.max(0, Math.min(100, readability));
-  }
+  let gradeLevel = null;
 
   // Top keywords (excluding stopwords)
   const STOPWORDS = new Set('a,an,the,and,or,but,if,then,else,for,of,to,in,on,at,by,with,from,as,is,are,was,were,be,been,being,this,that,these,those,it,its,i,you,he,she,we,they,them,his,her,our,your,their,not,no,so,do,does,did,have,has,had,will,would,can,could,should,may,might,must,about,into,over,after,before,up,down,out,off,than,too,very,just,also,more,most,such,only,own,same,s,t,re,ve,ll,d,m'.split(','));
@@ -228,6 +311,36 @@ async function scorlyInPageAnalyze() {
     .sort((a, b) => b[1] - a[1])
     .slice(0, 30)
     .map(([word, count]) => ({ word, count, pct: wordCount ? Math.round((count / wordCount) * 1000) / 10 : 0 }));
+
+  // Two- and three-word phrases. Single words ("work", "new") say little
+  // about what a page targets; "external wall insulation" says a lot.
+  // Counted within lines so a phrase never straddles a heading and the
+  // paragraph after it, and only phrases that neither start nor end on a
+  // stopword. A longer phrase absorbs the shorter ones it contains when it
+  // occurs just as often, so "wall insulation" is not listed twice.
+  const topPhrases = (() => {
+    const counts = new Map();
+    bodyText.split(/\n+/).forEach((line) => {
+      const toks = line.toLowerCase().split(/[^a-z0-9'-]+/).filter(Boolean);
+      for (let n = 2; n <= 3; n++) {
+        for (let i = 0; i + n <= toks.length; i++) {
+          const gram = toks.slice(i, i + n);
+          if (STOPWORDS.has(gram[0]) || STOPWORDS.has(gram[n - 1]) || gram.some((w) => w.length < 2 || /^\d+$/.test(w))) continue;
+          const key = gram.join(' ');
+          counts.set(key, (counts.get(key) || 0) + 1);
+        }
+      }
+    });
+    const list = Array.from(counts.entries()).filter(([, c]) => c >= 2)
+      .sort((a, b) => b[1] - a[1] || b[0].split(' ').length - a[0].split(' ').length);
+    const kept = [];
+    list.forEach(([phrase, count]) => {
+      if (kept.length >= 15) return;
+      if (kept.some((k) => k.count === count && k.phrase.indexOf(phrase) >= 0)) return;
+      kept.push({ phrase, count });
+    });
+    return kept;
+  })();
 
   // ---------- Text blocks (for exact-wording comparison) ----------
   // One entry per visible copy-bearing element, in document order, so two
@@ -250,6 +363,35 @@ async function scorlyInPageAnalyze() {
     textBlocks.push({ tag: node.tagName.toLowerCase(), text: kept });
   });
 
+  // ---------- Readability ----------
+  // Flesch reading ease and Flesch-Kincaid grade, measured over prose only:
+  // paragraphs, list items, quotes and table cells, each closed as its own
+  // sentence. Run over the whole body text instead, a page whose nav and
+  // labels carry no full stops reads as a few 300-word "sentences" (Flesch 0,
+  // grade 30), and splitting on every line break swings the other way,
+  // counting every three-word button as a sentence.
+  (() => {
+    const prose = textBlocks.filter((b) => /^(p|li|blockquote|dd|td|figcaption)$/.test(b.tag))
+      .map((b) => (/[.!?:;…]["'\u201d\u2019)]?$/.test(b.text) ? b.text : b.text + '.')).join(' ');
+    const proseSentences = prose.split(/[.!?…]+(?:\s|$)/).map((x) => x.trim().split(/\s+/).filter(Boolean)).filter((w) => w.length > 2);
+    let proseWords = [].concat.apply([], proseSentences).slice(0, 3000);
+    let sentenceTotal = proseSentences.length;
+    // Too little prose to measure: fall back to the whole page text.
+    if (sentenceTotal < 3 || proseWords.length < 30) {
+      proseWords = words.slice(0, 2000);
+      sentenceTotal = sentenceCount;
+      if (!sentenceTotal || !proseWords.length) return;
+    }
+    let syllableTotal = 0;
+    proseWords.forEach((w) => { syllableTotal += countSyllables(w); });
+    const wps = proseWords.length / sentenceTotal;
+    const spw = syllableTotal / proseWords.length;
+    readability = Math.max(0, Math.min(100, Math.round(206.835 - 1.015 * wps - 84.6 * spw)));
+    // The same two inputs expressed as a US school grade — the number most
+    // other audit tools quote.
+    gradeLevel = Math.max(0, Math.round((0.39 * wps + 11.8 * spw - 15.59) * 10) / 10);
+  })();
+
   // ---------- Duplicate paragraph text ----------
   // Only paragraphs long enough to be real content — short repeated phrases
   // ("Read more", "Share") are normal UI chrome, not duplicate content.
@@ -264,15 +406,56 @@ async function scorlyInPageAnalyze() {
   // ---------- Mobile: tap targets & text size ----------
   // Heuristic, not a real mobile-viewport emulation (there's no headless
   // browser here to resize) — this measures whatever viewport the page is
-  // actually open at, against the common ~44px tap-target guideline and the
-  // ~12px legibility floor several mobile-SEO tools use.
+  // actually open at, against WCAG 2.2's target-size minimum (2.5.8, 24×24px)
+  // and the ~12px legibility floor several mobile-SEO tools use.
+  //
+  // 24px, not Apple's 44px: 44 is a comfortable-design guideline that almost
+  // every footer and inline link misses, so it flagged nearly every site. The
+  // WCAG rule also carries two exceptions that are applied here: a link inside
+  // a sentence of text is exempt, and so is an undersized target with enough
+  // clear space around it (a 24px circle on its centre touches no other target).
   const TAP_TARGET_SELECTOR = 'a[href], button, input[type="button"], input[type="submit"], input[type="reset"], [role="button"]';
-  let smallTapTargets = 0, tapTargetsChecked = 0;
+  const TAP_MIN = 24;
+  let smallTapTargets = 0, tapTargetsChecked = 0, tapInlineExempt = 0, tapSpacedExempt = 0;
+  const smallTapSamples = [];
+  const tapRects = [];
   document.querySelectorAll(TAP_TARGET_SELECTOR).forEach((el) => {
+    if (tapRects.length >= 400) return;
     const rect = el.getBoundingClientRect();
     if (rect.width === 0 || rect.height === 0) return; // not actually rendered/visible
+    tapRects.push({ el, rect });
+  });
+  // A link is "in a sentence" when it is inline and its block parent carries
+  // other text of its own.
+  function inSentence(el) {
+    if (el.tagName !== 'A') return false;
+    if (getComputedStyle(el).display !== 'inline') return false;
+    let block = el.parentElement;
+    while (block && getComputedStyle(block).display === 'inline') block = block.parentElement;
+    if (!block) return false;
+    const own = textOf(el).length;
+    return textOf(block).length - own >= 20;
+  }
+  tapRects.forEach(({ el, rect }, i) => {
     tapTargetsChecked++;
-    if (rect.width < 44 || rect.height < 44) smallTapTargets++;
+    if (rect.width >= TAP_MIN && rect.height >= TAP_MIN) return;
+    if (inSentence(el)) { tapInlineExempt++; return; }
+    const cx = rect.left + rect.width / 2;
+    const cy = rect.top + rect.height / 2;
+    const r = TAP_MIN / 2;
+    const crowded = tapRects.some((o, j) => {
+      if (j === i || o.el.contains(el) || el.contains(o.el)) return false;
+      // Distance from this target's centre to the nearest point of the other.
+      const dx = Math.max(o.rect.left - cx, 0, cx - o.rect.right);
+      const dy = Math.max(o.rect.top - cy, 0, cy - o.rect.bottom);
+      return Math.sqrt(dx * dx + dy * dy) < r;
+    });
+    if (!crowded) { tapSpacedExempt++; return; }
+    smallTapTargets++;
+    if (smallTapSamples.length < 6) {
+      const label = (textOf(el) || el.getAttribute('aria-label') || el.getAttribute('title') || el.tagName.toLowerCase()).slice(0, 40);
+      smallTapSamples.push(`${label} (${Math.round(rect.width)}×${Math.round(rect.height)})`);
+    }
   });
 
   let smallFontCount = 0, fontSizeSamplesChecked = 0;
@@ -316,7 +499,10 @@ async function scorlyInPageAnalyze() {
     try {
       const parsed = JSON.parse(node.textContent);
       jsonLd.push(parsed);
-      const items = Array.isArray(parsed) ? parsed : [parsed];
+      // Yoast, Rank Math and most WordPress SEO plugins wrap every node in an
+      // @graph array with no @type of its own at the top.
+      const items = (Array.isArray(parsed) ? parsed : [parsed]).reduce((acc, it) =>
+        acc.concat(it && Array.isArray(it['@graph']) ? it['@graph'] : [it]), []);
       items.forEach((it) => {
         if (it && it['@type']) {
           const t = Array.isArray(it['@type']) ? it['@type'].join(', ') : it['@type'];
@@ -375,6 +561,7 @@ async function scorlyInPageAnalyze() {
   // Real Web Vitals, read from the browser's own performance entry buffer
   // (no network calls — just local Performance Observer APIs).
   let lcp = null, cls = null, fcp = null, tbt = null, inp = null;
+  let lcpLastEntry = null;
   try {
     const [lcpEntries, shiftEntries, paintEntries, longTasks, eventEntries] = await Promise.all([
       collectBuffered('largest-contentful-paint', 150),
@@ -385,7 +572,10 @@ async function scorlyInPageAnalyze() {
       // the API minimum — anything slower than one frame is kept.
       collectBuffered('event', 150, { durationThreshold: 16 }),
     ]);
-    if (lcpEntries.length) lcp = Math.round(lcpEntries[lcpEntries.length - 1].startTime);
+    if (lcpEntries.length) {
+      lcpLastEntry = lcpEntries[lcpEntries.length - 1];
+      lcp = Math.round(lcpLastEntry.startTime);
+    }
     if (shiftEntries.length || PerformanceObserver.supportedEntryTypes.includes('layout-shift')) {
       cls = Math.round(shiftEntries.reduce((sum, e) => sum + (e.hadRecentInput ? 0 : e.value), 0) * 1000) / 1000;
     }
@@ -419,12 +609,60 @@ async function scorlyInPageAnalyze() {
 
   // ---------- AI-SEO / E-E-A-T heuristics ----------
   const hasFaqSchema = jsonLdTypes.some((t) => /FAQPage/i.test(t));
-  const hasArticleSchema = jsonLdTypes.some((t) => /Article/i.test(t));
-  const hasOrgOrPersonSchema = jsonLdTypes.some((t) => /Organization|Person/i.test(t));
+  const hasArticleSchema = jsonLdTypes.some((t) => /Article|BlogPosting/i.test(t));
+
+  // Organization and its subtypes. schema.org has hundreds of LocalBusiness
+  // subtypes and most end in "Business" or "Organization"
+  // (HomeAndConstructionBusiness, EducationalOrganization); the rest are
+  // listed. A plain "Service" is deliberately absent: it is the thing a
+  // business offers (often nested in hasOfferCatalog), not the business.
+  // Mirrored in scoring.js (scorlyIsEntityType) — this file must stay
+  // self-contained, so keep the two in step.
+  const ENTITY_TYPE_RE = /(?:Organi[sz]ation|Business|Corporation)$|^(?:Airline|AccountingService|AnimalShelter|Attorney|AutoBodyShop|AutoDealer|AutoRepair|AutoWash|Bakery|BankOrCreditUnion|BarOrPub|BeautySalon|BedAndBreakfast|Brewery|CafeOrCoffeeShop|Campground|ChildCare|CollegeOrUniversity|Consortium|Cooperative|DaySpa|Dentist|Distillery|DryCleaningOrLaundry|Electrician|EmergencyService|EmploymentAgency|FinancialService|FoodEstablishment|GasStation|GeneralContractor|GovernmentOffice|HairSalon|HealthClub|Hospital|Hostel|Hotel|HousePainter|HVACBusiness|IceCreamShop|InsuranceAgency|LegalService|Library|Locksmith|MedicalClinic|Motel|MovingCompany|NailSalon|NGO|Notary|Optician|PerformingGroup|Pharmacy|Physician|Plumber|ProfessionalService|RealEstateAgent|Resort|Restaurant|FastFoodRestaurant|RoofingContractor|School|SelfStorage|ShoppingCenter|SportsTeam|Store|[A-Za-z]+Store|TattooParlor|TravelAgency|VeterinaryCare|Winery)$/;
+  function schemaTypes(node) {
+    const t = node && node['@type'];
+    return (Array.isArray(t) ? t : t ? [t] : []).map((x) => String(x).replace(/^.*[/:#]/, ''));
+  }
+  // Breadth-first, so the top-level business wins over anything nested in it
+  // (a founder, a parentOrganization, a catalogue of offered services).
+  function findNode(blocks, test) {
+    const queue = (blocks || []).slice();
+    for (let guard = 0; queue.length && guard < 5000; guard++) {
+      const node = queue.shift();
+      if (!node || typeof node !== 'object') continue;
+      if (Array.isArray(node)) { node.forEach((n) => queue.push(n)); continue; }
+      if (test(node)) return node;
+      Object.keys(node).forEach((k) => { if (node[k] && typeof node[k] === 'object') queue.push(node[k]); });
+    }
+    return null;
+  }
+  const entityNode = findNode(jsonLd, (n) => schemaTypes(n).some((t) => ENTITY_TYPE_RE.test(t)));
+  const personNode = findNode(jsonLd, (n) => schemaTypes(n).indexOf('Person') >= 0);
+  const hasOrgOrPersonSchema = !!(entityNode || personNode);
   const semanticLandmarks = ['main', 'article', 'nav', 'header', 'footer'].filter((tag) => document.querySelector(tag)).length;
 
+  // Authorship. A meta author tag that merely repeats the business name says
+  // nothing about who wrote or stands behind the content, so it is kept
+  // apart from a named person (a byline, rel=author, or a Person in schema).
   const authorMeta = metaContent('meta[name="author"]');
-  const hasAuthorByline = !!(authorMeta || document.querySelector('[rel="author"]') || document.querySelector('[itemprop="author"]') || jsonLd.some((j) => JSON.stringify(j).includes('"author"')));
+  const jsonLdAuthorNode = findNode(jsonLd, (n) => n.author != null);
+  const schemaAuthor = jsonLdAuthorNode ? (() => {
+    const a = Array.isArray(jsonLdAuthorNode.author) ? jsonLdAuthorNode.author[0] : jsonLdAuthorNode.author;
+    return typeof a === 'string' ? a : (a && a.name) || null;
+  })() : null;
+  const bylineEl = document.querySelector('[rel="author"], [itemprop="author"], .author, .byline, [class*="byline"], [class*="author-name"]');
+  const bylineText = bylineEl ? textOf(bylineEl).slice(0, 80) : '';
+  const orgNames = [entityNode && entityNode.name, ogRaw['og:site_name']].filter((v) => typeof v === 'string').map((v) => v.trim().toLowerCase());
+  const authorIsOrg = !!(authorMeta && (orgNames.indexOf(authorMeta.trim().toLowerCase()) >= 0 || /\b(ltd|limited|llc|inc|plc|gmbh|co\.|company)\b/i.test(authorMeta)));
+  const authorInfo = {
+    meta: authorMeta || null,
+    metaIsOrg: authorIsOrg,
+    schemaAuthor: typeof schemaAuthor === 'string' ? schemaAuthor.slice(0, 80) : null,
+    byline: bylineText || null,
+    person: personNode && typeof personNode.name === 'string' ? personNode.name.slice(0, 80) : null,
+    personRole: personNode ? (personNode.jobTitle || null) : null,
+  };
+  const hasAuthorByline = !!((authorMeta && !authorIsOrg) || bylineText || schemaAuthor || authorInfo.person);
   const publishMeta = metaContent('meta[property="article:published_time"]') || metaContent('meta[name="date"]');
   const hasPublishDate = !!(publishMeta || document.querySelector('time[datetime]') || jsonLd.some((j) => JSON.stringify(j).includes('datePublished')));
   const lowerLinks = anchors.map((a) => ((a.getAttribute('href') || '') + ' ' + textOf(a)).toLowerCase());
@@ -486,7 +724,7 @@ async function scorlyInPageAnalyze() {
   // Emails sitting in visible text (not mailto: links) are harvestable by
   // spam bots; mailto links are reported separately since they're deliberate.
   const textEmails = Array.from(new Set((bodyText.match(/\b[\w.+-]+@[\w-]+(?:\.[\w-]+)+\b/g) || [])
-    .filter((e) => !/\.(png|jpg|jpeg|gif|webp|svg|css|js)$/i.test(e)))).slice(0, 5);
+    .filter((e) => !/\.(png|jpg|jpeg|gif|webp|svg|css|js)$/i.test(e) && !/@(?:[\w-]+\.)*(?:example|test|invalid|localhost)(?:\.\w+)?$/i.test(e)))).slice(0, 5);
 
   const resourceUrls = (() => {
     try { return performance.getEntriesByType('resource').map((r) => r.name); } catch (e) { return []; }
@@ -509,17 +747,63 @@ async function scorlyInPageAnalyze() {
 
   // @media rules in same-origin stylesheets (cross-origin sheets throw on
   // cssRules — counted as unknown, not as zero).
+  // Walked recursively: Tailwind v4 (and any CSS using cascade layers or
+  // @supports) nests its @media rules inside @layer blocks, so a top-level-only
+  // count reported "1 @media rule" for a fully responsive site. The same walk
+  // collects @font-face font-display values and focus-outline removals.
   let mediaQueryCount = 0, styleSheetsReadable = 0, styleSheetsTotal = 0;
+  let fontFaces = 0, fontFacesBlocking = 0;
+  let focusOutlineRemoved = 0, focusVisibleRules = 0;
+  function walkRules(rules, depth) {
+    if (!rules || depth > 8) return;
+    for (let i = 0; i < rules.length; i++) {
+      const r = rules[i];
+      if (r instanceof CSSMediaRule) mediaQueryCount++;
+      if (r instanceof CSSFontFaceRule) {
+        fontFaces++;
+        const fd = (r.style.getPropertyValue('font-display') || '').trim();
+        // Missing or "block"/"auto" hides text for up to 3s while the font loads.
+        if (!fd || fd === 'block' || fd === 'auto') fontFacesBlocking++;
+      }
+      if (r instanceof CSSStyleRule) {
+        const sel = r.selectorText || '';
+        if (/:focus-visible/.test(sel)) focusVisibleRules++;
+        else if (/:focus\b/.test(sel)) {
+          const st = r.style;
+          const outline = (st.getPropertyValue('outline') || '') + ' ' + (st.getPropertyValue('outline-style') || '') + ' ' + (st.getPropertyValue('outline-width') || '');
+          const removes = /\bnone\b|(^|\s)0(px)?(\s|$)/.test(outline);
+          const replaced = !!(st.getPropertyValue('box-shadow') || st.getPropertyValue('border-color') || st.getPropertyValue('background-color') || st.getPropertyValue('text-decoration'));
+          if (removes && !replaced) focusOutlineRemoved++;
+        }
+      }
+      // Grouping rules (@media, @layer, @supports, @container, nesting) all
+      // expose their children as cssRules.
+      if (r.cssRules) walkRules(r.cssRules, depth + 1);
+    }
+  }
   try {
     Array.from(document.styleSheets).forEach((sheet) => {
       styleSheetsTotal++;
       try {
         const rules = sheet.cssRules;
         styleSheetsReadable++;
-        Array.from(rules).forEach((r) => { if (r.type === CSSRule.MEDIA_RULE) mediaQueryCount++; });
+        walkRules(rules, 0);
       } catch (e) { /* cross-origin */ }
     });
   } catch (e) { /* ignore */ }
+
+  // Web-font loading: font-display on @font-face (same-origin sheets only),
+  // the display= parameter on Google Fonts URLs (whose sheet is cross-origin
+  // and unreadable), and whether any font file is preloaded.
+  const googleFontLinks = Array.from(document.querySelectorAll('link[rel="stylesheet"][href*="fonts.googleapis.com"]')).map((l) => l.getAttribute('href') || '');
+  const fonts = {
+    faces: fontFaces,
+    facesBlocking: fontFacesBlocking,
+    googleFonts: googleFontLinks.length,
+    googleFontsNoSwap: googleFontLinks.filter((h) => !/[?&]display=(swap|optional|fallback)/i.test(h)).length,
+    preloaded: document.querySelectorAll('link[rel="preload"][as="font"]').length,
+    fileCount: (() => { try { return performance.getEntriesByType('resource').filter((r) => /\.(woff2?|ttf|otf)(\?|$)/i.test(r.name)).length; } catch (e) { return 0; } })(),
+  };
 
   // Document compression, from the navigation entry: encoded (wire) vs
   // decoded body size. Equal sizes on a non-trivial page = no gzip/brotli.
@@ -535,6 +819,53 @@ async function scorlyInPageAnalyze() {
     }
   } catch (e) { /* ignore */ }
 
+  // Head-level markup that parsers tolerate but that confuses crawlers: SEO
+  // meta tags stranded in <body> (usually injected late by a script), and
+  // duplicated title / description / canonical tags, where engines pick one
+  // and it may not be the one you meant. <meta itemprop> is valid microdata
+  // in the body and is excluded; <title> inside inline SVGs is not a page title.
+  const htmlHygiene = {
+    metaInBody: document.body ? document.body.querySelectorAll('meta[name], meta[property], meta[http-equiv]').length : 0,
+    titleCount: Array.from(document.querySelectorAll('title')).filter((t) => !t.closest('svg')).length,
+    descriptionCount: document.querySelectorAll('meta[name="description" i]').length,
+    canonicalCount: document.querySelectorAll('link[rel="canonical" i]').length,
+    robotsMetaCount: document.querySelectorAll('meta[name="robots" i]').length,
+  };
+
+  // Credentials pasted into the shipped HTML or inline scripts. Only formats
+  // with a distinctive, high-entropy prefix are matched, so ordinary text
+  // cannot trip them. Google "AIza" keys are left out on purpose: Maps and
+  // Firebase keys are designed to be public and are restricted by referrer.
+  // Matches are redacted before they leave the page.
+  const leakedSecrets = (() => {
+    const html = document.documentElement.outerHTML.slice(0, 3000000);
+    const PATTERNS = [
+      [/\bAKIA[0-9A-Z]{16}\b/g, 'AWS access key ID'],
+      [/\bsk_live_[0-9a-zA-Z]{20,}\b/g, 'Stripe secret key'],
+      [/\brk_live_[0-9a-zA-Z]{20,}\b/g, 'Stripe restricted key'],
+      [/\bgh[pousr]_[A-Za-z0-9]{36,}\b/g, 'GitHub token'],
+      [/\bgithub_pat_[A-Za-z0-9_]{50,}\b/g, 'GitHub token'],
+      [/\bxox[abprs]-[A-Za-z0-9-]{10,}\b/g, 'Slack token'],
+      [/\bsk-ant-[A-Za-z0-9_-]{20,}\b/g, 'Anthropic API key'],
+      [/\bsk-proj-[A-Za-z0-9_-]{40,}|\bsk-[A-Za-z0-9]{40,}\b/g, 'OpenAI API key'],
+      [/\bSG\.[A-Za-z0-9_-]{22}\.[A-Za-z0-9_-]{43}\b/g, 'SendGrid API key'],
+      [/\bkey-[0-9a-f]{32}\b/g, 'Mailgun API key'],
+      [/-----BEGIN (?:RSA |EC |DSA |OPENSSH )?PRIVATE KEY-----/g, 'Private key'],
+    ];
+    const found = [];
+    PATTERNS.forEach(([re, kind]) => {
+      (html.match(re) || []).slice(0, 3).forEach((m) => {
+        // A real key is random: digits and letters mixed. A long kebab-case
+        // class name that happens to start "sk-" is not.
+        if (kind !== 'Private key' && !(/\d/.test(m) && /[A-Za-z]/.test(m.slice(4)))) return;
+        if (found.length < 10 && !found.some((f) => f.kind === kind && f.redacted.slice(0, 6) === m.slice(0, 6))) {
+          found.push({ kind, redacted: m.slice(0, 6) + '…' + (m.length > 12 ? m.slice(-2) : '') });
+        }
+      });
+    });
+    return found;
+  })();
+
   const hygiene = {
     deprecatedTags: deprecatedFound,
     deprecatedTagCount: Object.values(deprecatedFound).reduce((a, b) => a + b, 0),
@@ -546,6 +877,12 @@ async function scorlyInPageAnalyze() {
     cdns,
     mediaQueries: { count: mediaQueryCount, readable: styleSheetsReadable, total: styleSheetsTotal },
     compression,
+    fonts,
+    brokenFragments: brokenFragments.slice(0, 10),
+    brokenFragmentCount: brokenFragments.length,
+    badContactLinks: badContactLinks.slice(0, 10),
+    htmlHygiene,
+    leakedSecrets,
   };
 
   // ---------- Trust / freshness / business-context signals ----------
@@ -565,12 +902,25 @@ async function scorlyInPageAnalyze() {
   const hasVatNumber = /\bVAT\s*(no\.?|number|reg)/i.test(bodyText);
   const hasTermsLink = lowerLinks.some((s) => /\bterms\b|terms-of|terms_of/.test(s));
   const hasReviewSignal = jsonLdTypes.some((t) => /Review|AggregateRating/i.test(t)) || /"aggregateRating"|"reviewRating"/.test(jsonLdText);
-  const SOCIAL_HOSTS = /facebook\.com|instagram\.com|linkedin\.com|x\.com|twitter\.com|youtube\.com|tiktok\.com|pinterest\./i;
-  const socialLinks = Array.from(new Set(
-    anchors.map((a) => a.getAttribute('href') || '').filter((h) => SOCIAL_HOSTS.test(h))
-      .map((h) => { try { return new URL(h, document.baseURI).hostname.replace(/^www\./, ''); } catch (e) { return null; } })
-      .filter(Boolean)
+  // Matched on the parsed hostname, never the raw href: an unanchored
+  // /x\.com/ also matches dazemx.com, netflix.com and every other domain
+  // ending in "x". Mirrored in scoring.js (scorlySocialHost).
+  const SOCIAL_DOMAINS = ['facebook.com', 'instagram.com', 'linkedin.com', 'x.com', 'twitter.com', 'youtube.com', 'tiktok.com', 'pinterest.com', 'pinterest.co.uk', 'threads.net', 'bsky.app', 'mastodon.social'];
+  // Third-party review platforms: independent proof the business is real and
+  // rated, which a page cannot fake with its own schema.
+  const REVIEW_DOMAINS = ['trustpilot.com', 'checkatrade.com', 'trustatrader.com', 'ratedpeople.com', 'mybuilder.com', 'yell.com', 'yelp.com', 'yelp.co.uk', 'tripadvisor.com', 'tripadvisor.co.uk', 'feefo.com', 'reviews.io', 'reviews.co.uk', 'houzz.com', 'houzz.co.uk', 'bark.com', 'g2.com', 'capterra.com', 'glassdoor.com', 'homeadvisor.com', 'angi.com', 'thumbtack.com', 'bbb.org', 'which.co.uk', 'productreview.com.au', 'g.page'];
+  function hostOf(h) {
+    try { return new URL(h, document.baseURI).hostname.toLowerCase().replace(/^www\./, ''); } catch (e) { return null; }
+  }
+  const onDomain = (host, list) => list.find((d) => host === d || host.slice(-(d.length + 1)) === '.' + d) || null;
+  const linkHosts = anchors.map((a) => hostOf(a.getAttribute('href') || '')).filter(Boolean);
+  const socialLinks = Array.from(new Set(linkHosts.map((h) => onDomain(h, SOCIAL_DOMAINS)).filter(Boolean)));
+  const reviewPlatforms = Array.from(new Set(
+    linkHosts.map((h) => onDomain(h, REVIEW_DOMAINS)).filter(Boolean)
+      .concat(anchors.some((a) => /google\.[a-z.]+\/maps|maps\.app\.goo\.gl|search\.google\.com\/local\/reviews/i.test(a.getAttribute('href') || '')) ? ['google reviews'] : [])
   ));
+  // A testimonials section, found by its heading.
+  const hasTestimonials = headingList.some((h) => /testimonial|review|what (our )?(customers|clients) say|from our (customers|clients)|words from|kind words/i.test(h.text));
   const hasOpeningHours = /"openingHours|opening\s+hours|business\s+hours/i.test(jsonLdText + ' ' + bodyText.slice(0, 20000));
 
   // Copyright year: "© 2026", "(c) 2024-2026", "Copyright 2026".
@@ -604,23 +954,7 @@ async function scorlyInPageAnalyze() {
   });
 
   // Business context from structured data: name / type / address / area.
-  function findOrgNode(blocks) {
-    let found = null;
-    const visit = (node) => {
-      if (!node || typeof node !== 'object' || found) return;
-      const t = node['@type'];
-      const types = Array.isArray(t) ? t : t ? [t] : [];
-      if (types.some((x) => /Organization|LocalBusiness|Corporation|Store|Service|Restaurant|Hotel|Dentist|Attorney|Physician|Plumber|Electrician|AutoRepair|ProfessionalService/i.test(String(x)))) {
-        found = node;
-        return;
-      }
-      if (Array.isArray(node)) node.forEach(visit);
-      else Object.keys(node).forEach((k) => { if (typeof node[k] === 'object') visit(node[k]); });
-    };
-    (blocks || []).forEach(visit);
-    return found;
-  }
-  const orgNode = findOrgNode(jsonLd);
+  const orgNode = entityNode;
   const addrNode = orgNode && typeof orgNode.address === 'object' ? (Array.isArray(orgNode.address) ? orgNode.address[0] : orgNode.address) : null;
   const businessContext = {
     siteName: (orgNode && orgNode.name) || ogRaw['og:site_name'] || null,
@@ -635,7 +969,46 @@ async function scorlyInPageAnalyze() {
     hasPhone, hasEmail, hasAddress, hasCompanyNumber, hasVatNumber,
     hasTermsLink, hasReviewSignal, hasOpeningHours,
     socialProfiles: socialLinks,
+    reviewPlatforms,
+    hasTestimonials,
   };
+
+  // ---------- Schema drift ----------
+  // Does what the JSON-LD claims about the business match what the page
+  // actually says? Engines (and AI answer engines especially) discount
+  // markup that disagrees with the visible text, and a stale phone number in
+  // schema is a common leftover after a move or rebrand.
+  const schemaDrift = (() => {
+    if (!orgNode) return null;
+    const visible = (bodyText + ' ' + titleText).toLowerCase();
+    const visibleDigits = (bodyText + ' ' + telLinks.join(' ')).replace(/\D/g, '');
+    const checks = [];
+    if (typeof orgNode.name === 'string' && orgNode.name.trim()) {
+      const name = orgNode.name.trim();
+      // Legal suffixes are often dropped in running copy ("TCK Plastering").
+      const core = name.toLowerCase().replace(/\b(ltd|limited|llc|inc|plc|gmbh|co)\.?$/i, '').trim();
+      checks.push({ field: 'name', value: name, found: visible.indexOf(core) >= 0 });
+    }
+    if (typeof orgNode.telephone === 'string' && orgNode.telephone.replace(/\D/g, '').length >= 7) {
+      // Compare the last 9 digits so +44 7854… and 07854… count as the same.
+      const tail = orgNode.telephone.replace(/\D/g, '').slice(-9);
+      checks.push({ field: 'telephone', value: orgNode.telephone, found: visibleDigits.indexOf(tail) >= 0 });
+    }
+    if (typeof orgNode.email === 'string' && orgNode.email.indexOf('@') > 0) {
+      const email = orgNode.email.toLowerCase();
+      checks.push({ field: 'email', value: orgNode.email, found: visible.indexOf(email) >= 0 || mailtoLinks.some((m) => m.toLowerCase() === email) });
+    }
+    if (addrNode) {
+      if (typeof addrNode.addressLocality === 'string' && addrNode.addressLocality.trim()) {
+        checks.push({ field: 'locality', value: addrNode.addressLocality, found: visible.indexOf(addrNode.addressLocality.trim().toLowerCase()) >= 0 });
+      }
+      if (typeof addrNode.postalCode === 'string' && addrNode.postalCode.trim()) {
+        const pc = addrNode.postalCode.replace(/\s+/g, '').toLowerCase();
+        checks.push({ field: 'postalCode', value: addrNode.postalCode, found: visible.replace(/\s+/g, '').indexOf(pc) >= 0 });
+      }
+    }
+    return { checks, mismatches: checks.filter((c) => !c.found).map((c) => ({ field: c.field, value: String(c.value).slice(0, 80) })) };
+  })();
   const freshness = { copyrightYear, latestDate, dateCandidateCount: dateCandidates.length };
 
   // ---------- AI-written copy signals ----------
@@ -651,7 +1024,12 @@ async function scorlyInPageAnalyze() {
     // Prose only: headings, paragraphs, list items and quotes. Nav labels,
     // button text and table cells are UI chrome and would skew the rates.
     const proseBlocks = textBlocks.filter((b) => /^(p|li|blockquote|h[1-6]|dd)$/.test(b.tag));
-    const prose = proseBlocks.map((b) => b.text).join('\n');
+    // Each block is closed with a full stop if it has no end punctuation of
+    // its own (headings, list items), so that a heading and the paragraph
+    // under it are two sentences, not one: otherwise "…in Southampton" +
+    // "Plastering, rendering and insulation…" reads as a single triad, and
+    // every sentence-length measure is skewed by run-on "sentences".
+    const prose = proseBlocks.map((b) => (/[.!?:;…]["'”’)]?$/.test(b.text) ? b.text : b.text + '.')).join('\n');
     const proseWords = prose ? prose.split(/\s+/).filter(Boolean).length : 0;
     // Per 1,000 words, so a long page is not penalised for simply being long.
     const per1k = (n) => (proseWords ? Math.round((n / proseWords) * 10000) / 10 : 0);
@@ -1110,6 +1488,243 @@ async function scorlyInPageAnalyze() {
     };
   })();
 
+  // ---------- Accessibility ----------
+  // Read from computed styles and the live DOM, which is what makes these
+  // more than markup greps: contrast uses the colours the browser actually
+  // paints, and names come from the same sources a screen reader uses.
+  const a11y = (() => {
+    const isVisible = (el) => {
+      const r = el.getBoundingClientRect();
+      if (r.width === 0 || r.height === 0) return false;
+      const cs = getComputedStyle(el);
+      return cs.visibility !== 'hidden' && cs.display !== 'none';
+    };
+    const textOrEmpty = (s) => (s || '').replace(/\s+/g, ' ').trim();
+    // Accessible name, simplified from the accname spec: aria-labelledby,
+    // aria-label, contents (including img alt and svg <title>), title.
+    function accessibleName(el) {
+      const lb = el.getAttribute('aria-labelledby');
+      if (lb) {
+        const t = lb.split(/\s+/).map((id) => { const n = document.getElementById(id); return n ? textOf(n) : ''; }).join(' ').trim();
+        if (t) return t;
+      }
+      const al = textOrEmpty(el.getAttribute('aria-label'));
+      if (al) return al;
+      const own = textOf(el);
+      if (own) return own;
+      const img = el.querySelector('img[alt]:not([alt=""]), [role="img"][aria-label], svg title');
+      if (img) return textOrEmpty(img.getAttribute('alt') || img.getAttribute('aria-label') || img.textContent);
+      if (el.tagName === 'INPUT') return textOrEmpty(el.value || el.getAttribute('alt'));
+      return textOrEmpty(el.getAttribute('title'));
+    }
+    const describe = (el) => {
+      const name = accessibleName(el);
+      const tag = el.tagName.toLowerCase();
+      const cls = (typeof el.className === 'string' && el.className.trim()) ? '.' + el.className.trim().split(/\s+/)[0] : '';
+      return name ? `${tag} "${name.slice(0, 40)}"` : `${tag}${el.id ? '#' + el.id : cls}`.slice(0, 60);
+    };
+
+    // --- Colour contrast (WCAG 1.4.3) ---
+    // Computed colours are not always rgb(): Tailwind v4 and modern CSS
+    // resolve to oklch(), lab() or color(). Painting the value onto a 1×1
+    // canvas and reading the pixel back converts any syntax the browser
+    // understands into sRGB, which is what the WCAG formula needs.
+    const colorCache = new Map();
+    let colorCtx = null;
+    function parseColor(s) {
+      if (!s) return null;
+      if (colorCache.has(s)) return colorCache.get(s);
+      let out = null;
+      const m = s.match(/^rgba?\(\s*([\d.]+)[\s,]+([\d.]+)[\s,]+([\d.]+)(?:\s*[,/]\s*([\d.]+%?))?\s*\)$/i);
+      if (m) {
+        let a = m[4] == null ? 1 : parseFloat(m[4]);
+        if (m[4] && /%$/.test(m[4])) a /= 100;
+        out = [parseFloat(m[1]), parseFloat(m[2]), parseFloat(m[3]), a];
+      } else if (s === 'transparent') {
+        out = [0, 0, 0, 0];
+      } else {
+        try {
+          if (!colorCtx) {
+            const c = document.createElement('canvas');
+            c.width = c.height = 1;
+            colorCtx = c.getContext('2d', { willReadFrequently: true });
+          }
+          colorCtx.clearRect(0, 0, 1, 1);
+          colorCtx.fillStyle = '#000';
+          colorCtx.fillStyle = s;
+          colorCtx.fillRect(0, 0, 1, 1);
+          const d = colorCtx.getImageData(0, 0, 1, 1).data;
+          out = [d[0], d[1], d[2], d[3] / 255];
+        } catch (e) { out = null; }
+      }
+      colorCache.set(s, out);
+      return out;
+    }
+    const blend = (top, bottom) => {
+      const a = top[3];
+      return [top[0] * a + bottom[0] * (1 - a), top[1] * a + bottom[1] * (1 - a), top[2] * a + bottom[2] * (1 - a), 1];
+    };
+    const lum = (c) => {
+      const ch = c.slice(0, 3).map((v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); });
+      return 0.2126 * ch[0] + 0.7152 * ch[1] + 0.0722 * ch[2];
+    };
+    const ratioOf = (a, b) => {
+      const la = lum(a), lb = lum(b);
+      return (Math.max(la, lb) + 0.05) / (Math.min(la, lb) + 0.05);
+    };
+    const hex = (c) => '#' + c.slice(0, 3).map((v) => Math.round(v).toString(16).padStart(2, '0')).join('');
+    // Images, video and canvases, in page coordinates: text drawn over one of
+    // these has no single background colour, so it is skipped, not guessed.
+    const sy = window.scrollY || 0, sx = window.scrollX || 0;
+    const mediaRects = Array.from(document.querySelectorAll('img, video, canvas, picture, svg image')).slice(0, 300).map((m) => {
+      const r = m.getBoundingClientRect();
+      return { el: m, l: r.left + sx, t: r.top + sy, r: r.right + sx, b: r.bottom + sy, w: r.width };
+    }).filter((m) => m.w > 40);
+    // Effective background: stack the semi-transparent background colours of
+    // the ancestors until an opaque one (or the white canvas) is reached. A
+    // background-image anywhere on the way makes it unknowable.
+    function backgroundOf(el) {
+      const layers = [];
+      for (let n = el; n && n.nodeType === 1; n = n.parentElement) {
+        const cs = getComputedStyle(n);
+        if (cs.backgroundImage && cs.backgroundImage !== 'none') return null;
+        const c = parseColor(cs.backgroundColor);
+        if (c && c[3] > 0) {
+          layers.push(c);
+          if (c[3] >= 1) break;
+        }
+      }
+      let bg = [255, 255, 255, 1];
+      for (let i = layers.length - 1; i >= 0; i--) bg = blend(layers[i], bg);
+      return bg;
+    }
+    let contrastChecked = 0, contrastSkipped = 0;
+    const contrastFails = [];
+    const seen = new Set();
+    const walker = document.createTreeWalker(document.body || document.documentElement, NodeFilter.SHOW_TEXT);
+    for (let node = walker.nextNode(); node && contrastChecked < 400; node = walker.nextNode()) {
+      if (!node.nodeValue || !node.nodeValue.trim() || node.nodeValue.trim().length < 2) continue;
+      const el = node.parentElement;
+      if (!el || seen.has(el) || SKIP_TEXT_TAGS.has(el.tagName) || el.closest('svg, [aria-hidden="true"], button[disabled], input[disabled]')) continue;
+      seen.add(el);
+      if (!isVisible(el)) continue;
+      const cs = getComputedStyle(el);
+      if (parseFloat(cs.opacity) === 0) continue;
+      const r = el.getBoundingClientRect();
+      const box = { l: r.left + sx, t: r.top + sy, r: r.right + sx, b: r.bottom + sy };
+      if (mediaRects.some((m) => !el.contains(m.el) && m.l < box.r && m.r > box.l && m.t < box.b && m.b > box.t)) { contrastSkipped++; continue; }
+      const bg = backgroundOf(el);
+      const fgRaw = parseColor(cs.color);
+      if (!bg || !fgRaw) { contrastSkipped++; continue; }
+      const fg = fgRaw[3] < 1 ? blend(fgRaw, bg) : fgRaw;
+      contrastChecked++;
+      const size = parseFloat(cs.fontSize) || 16;
+      const bold = parseInt(cs.fontWeight, 10) >= 700;
+      const large = size >= 24 || (size >= 18.66 && bold);
+      const need = large ? 3 : 4.5;
+      const ratio = ratioOf(fg, bg);
+      if (ratio < need) {
+        contrastFails.push({ text: textOf(el).slice(0, 50), ratio: Math.round(ratio * 100) / 100, need, fg: hex(fg), bg: hex(bg) });
+      }
+    }
+    contrastFails.sort((a, b) => a.ratio - b.ratio);
+
+    // --- Form fields without a label (WCAG 1.3.1 / 4.1.2) ---
+    const fields = Array.from(document.querySelectorAll('input, select, textarea')).filter((f) => {
+      const t = (f.getAttribute('type') || '').toLowerCase();
+      return !/^(hidden|submit|button|reset|image)$/.test(t) && isVisible(f);
+    });
+    const unlabelled = fields.filter((f) => {
+      if (f.id && document.querySelector('label[for="' + (window.CSS && CSS.escape ? CSS.escape(f.id) : f.id) + '"]')) return false;
+      if (f.closest('label') && textOf(f.closest('label'))) return false;
+      return !(textOrEmpty(f.getAttribute('aria-label')) || f.getAttribute('aria-labelledby') || textOrEmpty(f.getAttribute('title')));
+    });
+    const placeholderOnly = unlabelled.filter((f) => f.getAttribute('placeholder')).length;
+
+    // --- Buttons and links with no accessible name ---
+    const namelessButtons = Array.from(document.querySelectorAll('button, [role="button"], input[type="submit"], input[type="button"]'))
+      .filter((b) => isVisible(b) && !accessibleName(b));
+
+    // --- Skip link: one of the first few focusable things jumps to content ---
+    // First 15, not first 1: cookie banners and consent buttons are often
+    // earlier in the tab order than the skip link itself.
+    const firstFocusable = Array.from(document.querySelectorAll('a[href], button, input, [tabindex]:not([tabindex="-1"])')).slice(0, 15);
+    const skipLink = firstFocusable.find((a) => a.tagName === 'A' && /^#./.test(a.getAttribute('href') || '') &&
+      (/skip|jump to|main content|go to content/i.test(textOf(a) + ' ' + (a.getAttribute('aria-label') || '')) || /^#(main|content|main-content|maincontent)$/i.test(a.getAttribute('href'))));
+
+    // --- Duplicate ids (break label[for], aria-labelledby, skip links) ---
+    const idCounts = new Map();
+    document.querySelectorAll('[id]').forEach((n) => { if (n.id) idCounts.set(n.id, (idCounts.get(n.id) || 0) + 1); });
+    const duplicateIds = Array.from(idCounts.entries()).filter(([, n]) => n > 1).map(([id]) => id);
+
+    // --- Keyboard traps and focus order ---
+    const positiveTabindex = document.querySelectorAll('[tabindex]:not([tabindex="0"]):not([tabindex^="-"])').length;
+    const FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]):not([type="hidden"]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex^="-"])';
+    const hiddenFocusable = Array.from(document.querySelectorAll('[aria-hidden="true"]'))
+      .reduce((n, h) => n + Array.from(h.querySelectorAll(FOCUSABLE)).concat(h.matches(FOCUSABLE) ? [h] : []).filter((f) => isVisible(f) && !f.closest('[inert]')).length, 0);
+
+    // --- Media and embeds ---
+    const videos = Array.from(document.querySelectorAll('video')).filter(isVisible);
+    // A muted, looping, control-less autoplay video is decoration, not content.
+    const contentVideos = videos.filter((v) => !(v.autoplay && v.muted && !v.controls));
+    const videosWithoutCaptions = contentVideos.filter((v) => !v.querySelector('track[kind="captions"], track[kind="subtitles"]')).length;
+    const autoplayWithSound = Array.from(document.querySelectorAll('video[autoplay], audio[autoplay]')).filter((m) => !m.muted).length;
+    const untitledIframes = Array.from(document.querySelectorAll('iframe')).filter((f) => isVisible(f) && !textOrEmpty(f.getAttribute('title')) && !textOrEmpty(f.getAttribute('aria-label'))).length;
+
+    // --- Data tables without header cells ---
+    const tablesWithoutHeaders = Array.from(document.querySelectorAll('table')).filter((t) => {
+      if (/presentation|none/i.test(t.getAttribute('role') || '')) return false;
+      const rows = t.querySelectorAll('tr');
+      return rows.length >= 2 && rows[0].children.length >= 2 && !t.querySelector('th, [role="columnheader"], [role="rowheader"]');
+    }).length;
+
+    return {
+      contrast: { checked: contrastChecked, skipped: contrastSkipped, failing: contrastFails.length, samples: contrastFails.slice(0, 8) },
+      forms: { fields: fields.length, unlabelled: unlabelled.length, placeholderOnly, samples: unlabelled.slice(0, 5).map(describe) },
+      namelessButtons: { count: namelessButtons.length, samples: namelessButtons.slice(0, 5).map(describe) },
+      skipLink: skipLink ? skipLink.getAttribute('href') : null,
+      landmarks: {
+        main: document.querySelectorAll('main, [role="main"]').length,
+        nav: document.querySelectorAll('nav, [role="navigation"]').length,
+        header: !!document.querySelector('header, [role="banner"]'),
+        footer: !!document.querySelector('footer, [role="contentinfo"]'),
+      },
+      duplicateIds: { count: duplicateIds.length, samples: duplicateIds.slice(0, 6) },
+      positiveTabindex,
+      hiddenFocusable,
+      focus: { outlineRemoved: focusOutlineRemoved, focusVisibleRules, readableSheets: styleSheetsReadable },
+      media: { videos: contentVideos.length, videosWithoutCaptions, autoplayWithSound, untitledIframes },
+      tablesWithoutHeaders,
+      headingSkips,
+    };
+  })();
+
+  // ---------- LCP element ----------
+  // Which element the Largest Contentful Paint was, and whether it was
+  // loaded the way the LCP resource should be: never lazy, and fetched early
+  // (fetchpriority="high" or a <link rel="preload">).
+  let lcpElement = null;
+  try {
+    const last = lcpLastEntry;
+    if (last) {
+      const el = last.element;
+      const url = last.url || '';
+      const tag = el ? el.tagName.toLowerCase() : null;
+      const preloaded = !!(url && Array.from(document.querySelectorAll('link[rel="preload"][as="image"]')).some((l) => {
+        try { return new URL(l.getAttribute('href'), document.baseURI).href === url; } catch (e) { return false; }
+      }));
+      lcpElement = {
+        tag,
+        url: url ? url.slice(0, 300) : null,
+        isImage: !!url,
+        text: !url && el ? textOf(el).slice(0, 80) : null,
+        loading: el && el.getAttribute ? el.getAttribute('loading') : null,
+        fetchpriority: el && el.getAttribute ? (el.getAttribute('fetchpriority') || null) : null,
+        preloaded,
+      };
+    }
+  } catch (e) { /* not supported */ }
+
   const hostname = location.hostname;
   const isLocalhost = hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1' ||
     hostname.endsWith('.local') || /^192\.168\.|^10\.|^172\.(1[6-9]|2\d|3[0-1])\./.test(hostname);
@@ -1154,7 +1769,7 @@ async function scorlyInPageAnalyze() {
     lang,
     hasDoctype,
     favicon,
-    headings: { list: headingList, counts: headingCounts, h1: h1Texts, duplicateCount: duplicateHeadingCount },
+    headings: { list: headingList, counts: headingCounts, h1: h1Texts, duplicateCount: duplicateHeadingCount, skips: headingSkips },
     images,
     links: {
       internalList, externalList,
@@ -1163,7 +1778,7 @@ async function scorlyInPageAnalyze() {
     },
     content: {
       wordCount, paragraphCount, sentenceCount, avgSentenceLength, readTimeMin, readability, topKeywords,
-      emptyBoldCount, duplicateParagraphCount,
+      emptyBoldCount, duplicateParagraphCount, gradeLevel, topPhrases,
     },
     wordCount,
     htmlSize,
@@ -1176,14 +1791,18 @@ async function scorlyInPageAnalyze() {
     firstParagraph,
     textBlocks,
     perf: { ttfb, transferSize, requestCount, nextHopProtocol, lcp, cls, fcp, tbt, inp, renderBlockingCount },
+    lcpElement,
+    a11y,
+    schemaDrift,
+    metaReferrer: metaContent('meta[name="referrer" i]'),
     resources: resourceList,
     security: { isSecureContext, mixedContentCount, https: location.protocol === 'https:' },
     mobile: {
-      tapTargets: { checked: tapTargetsChecked, small: smallTapTargets },
+      tapTargets: { checked: tapTargetsChecked, small: smallTapTargets, threshold: TAP_MIN, inlineExempt: tapInlineExempt, spacedExempt: tapSpacedExempt, samples: smallTapSamples },
       fontSizes: { checked: fontSizeSamplesChecked, small: smallFontCount },
     },
     aiSeo: { hasFaqSchema, hasArticleSchema, semanticLandmarks, hasStructuredData: jsonLd.length > 0, hasMetaDescription: !!descText, hasClearH1: h1Texts.length === 1 },
-    eeat: { hasAuthorByline, hasPublishDate, hasAboutLink, hasContactLink, hasPrivacyLink, hasOrgOrPersonSchema, aboutMatch, contactMatch, privacyMatch },
+    eeat: { hasAuthorByline, authorInfo, hasPublishDate, hasAboutLink, hasContactLink, hasPrivacyLink, hasOrgOrPersonSchema, aboutMatch, contactMatch, privacyMatch },
     trustSignals,
     freshness,
     businessContext,

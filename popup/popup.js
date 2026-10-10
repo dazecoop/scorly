@@ -244,6 +244,7 @@ function renderAll(pending) {
   renderTechTab(lastData, lastScoreResult);
   renderPerfTab(lastData, lastScoreResult);
   renderSecurityTab(lastData, lastScoreResult);
+  renderA11yTab(lastData, lastScoreResult);
 
   const ogData = renderOgTab(lastData);
   renderOgCard(currentPlatform, ogData);

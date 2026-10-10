@@ -50,6 +50,26 @@ function scorlySortChecksFull(checks) {
 // directly, so a field that's missing on an older snapshot is handled once
 // here instead of in four separate places.
 // ---------------------------------------------------------------------------
+// Tap-target line for the Mobile sections. Captures since the WCAG rule
+// carry `threshold` (24px, with exemptions); older ones were measured at 44px.
+function tapTargetSummary(tt) {
+  if (!tt.threshold) return `${tt.small} of ${tt.checked} tap targets smaller than 44×44px (older capture)`;
+  return `${tt.small} of ${tt.checked} tap targets under ${tt.threshold}×${tt.threshold}px and crowded (WCAG 2.5.8; ${tt.inlineExempt || 0} inline and ${tt.spacedExempt || 0} well-spaced exempt)`;
+}
+
+// One-line accessibility summary for the exports.
+function a11ySummary(ax) {
+  const c = ax.contrast;
+  return [
+    `${c.failing} of ${c.checked} sampled text elements below WCAG AA contrast`,
+    ax.forms.fields ? `${ax.forms.unlabelled} of ${ax.forms.fields} form fields unlabelled` : null,
+    `${ax.namelessButtons.count} unnamed button(s)`,
+    `skip link: ${ax.skipLink ? 'yes' : 'no'}`,
+    `${ax.landmarks.main} <main> landmark(s)`,
+    ax.duplicateIds.count ? `${ax.duplicateIds.count} duplicate id(s)` : null,
+  ].filter(Boolean);
+}
+
 function buildReportModel(data, scoreResult) {
   const insights = (typeof scorlyComputeAiInsights === 'function') ? scorlyComputeAiInsights(data, scoreResult) : null;
   const sdIssues = data.jsonLd && data.jsonLd.length ? scorlyValidateStructuredData(data.jsonLd) : [];
@@ -126,7 +146,7 @@ function toCsv(data, scoreResult) {
   push('URL', data.url);
   push('Analyzed At', data.analyzedAt);
   push('Overall Score', scoreResult.overallScore);
-  Object.keys(scoreResult.categoryScores).forEach((k) => push(CATEGORY_LABELS[k] + ' Score', scoreResult.categoryScores[k]));
+  Object.keys(scoreResult.categoryScores).forEach((k) => push((CATEGORY_LABELS[k] || k) + ' Score', scoreResult.categoryScores[k]));
   push('Issues', scoreResult.counts.issues);
   push('Warnings', scoreResult.counts.warnings);
   push('Passed', scoreResult.counts.passed);
@@ -214,6 +234,9 @@ function toCsv(data, scoreResult) {
     push('CSP Header', data.securityHeaders.csp ? 'Set' : 'Not set');
     push('X-Content-Type-Options', data.securityHeaders.xContentTypeOptions || 'Not set');
     push('X-Frame-Options', data.securityHeaders.xFrameOptions || 'Not set');
+    if ('referrerPolicy' in data.securityHeaders) push('Referrer-Policy', data.securityHeaders.referrerPolicy || 'Not set');
+    if ('permissionsPolicy' in data.securityHeaders) push('Permissions-Policy', data.securityHeaders.permissionsPolicy ? 'Set' : 'Not set');
+    if (data.securityHeaders.xRobotsTag) push('X-Robots-Tag', data.securityHeaders.xRobotsTag);
   }
   push('Robots.txt Found', data.robotsTxt);
   push('Sitemap.xml Found', data.sitemapXml);
@@ -223,6 +246,15 @@ function toCsv(data, scoreResult) {
     if (data.mobile.tapTargets) push('Small Tap Targets', `${data.mobile.tapTargets.small} of ${data.mobile.tapTargets.checked}`);
     if (data.mobile.fontSizes) push('Small Font Sizes', `${data.mobile.fontSizes.small} of ${data.mobile.fontSizes.checked}`);
   }
+  if (data.a11y) {
+    push('Contrast Failures', `${data.a11y.contrast.failing} of ${data.a11y.contrast.checked}`);
+    push('Unlabelled Form Fields', data.a11y.forms.unlabelled);
+    push('Unnamed Buttons', data.a11y.namelessButtons.count);
+    push('Skip Link', data.a11y.skipLink || 'None');
+    push('Duplicate IDs', data.a11y.duplicateIds.count);
+  }
+  if (data.content.gradeLevel != null) push('Reading Grade Level', data.content.gradeLevel);
+  if (data.content.topPhrases) push('Top Phrases', data.content.topPhrases.slice(0, 10).map((p) => `${p.phrase} (${p.count})`).join('; '));
 
   if (m.insights) {
     push('AI Visibility Explained', m.insights.aiVisibility);
@@ -236,7 +268,7 @@ function toCsv(data, scoreResult) {
       push('Vibe-Code Verdict', `${m.insights.vibeCode.band} (${m.insights.vibeCode.score}/100 confidence)`);
       push('Detected Builder', m.insights.vibeCode.builders.map((b) => b.name).join('; ') || 'None');
       push('Generated-Site Faults', m.insights.vibeCode.faults.map((f) => f.label).join('; ') || 'None');
-      if (m.insights.vibeCode.servedWords != null) push('Words in Served HTML', `${m.insights.vibeCode.servedWords} of ${m.insights.vibeCode.renderedWords}`);
+      if (m.insights.vibeCode.servedWords != null) push('Words in Served HTML', scorlyServedWordsText(m.insights.vibeCode.servedWords, m.insights.vibeCode.renderedWords));
       push('AI Visibility Deduction (vibe code)', m.insights.vibeCode.penalty);
     }
     if (m.insights.trust) push('Content Trust Score', m.insights.trust.score);
@@ -262,7 +294,7 @@ function toCsv(data, scoreResult) {
   if (m.problemImages.length) {
     rows.push([]);
     rows.push(['Image', 'Missing Alt', 'Oversized', 'Distorted', 'Legacy Format']);
-    m.problemImages.forEach((i) => rows.push([i.src, i.missing, i.oversized, i.distorted, i.format && ['png', 'jpg', 'gif', 'bmp'].includes(i.format)]));
+    m.problemImages.forEach((i) => rows.push([displayImageSrc(i.src), i.missing, i.oversized, i.distorted, i.format && ['png', 'jpg', 'gif', 'bmp'].includes(i.format)]));
   }
 
   if (data.resources && data.resources.length) {
@@ -281,7 +313,7 @@ function toMarkdown(data, scoreResult) {
   const m = buildReportModel(data, scoreResult);
   const insights = m.insights;
   const lines = [];
-  const pct = (n) => `${n}/100`;
+  const pct = (n) => (n == null ? 'not captured' : `${n}/100`);
   const msOr = (v) => (v != null ? (v >= 1000 ? (v / 1000).toFixed(1) + 's' : v + 'ms') : 'n/a');
   const yn = (b) => (b ? 'Yes' : 'No');
   const table = (head, rows) => {
@@ -339,7 +371,8 @@ function toMarkdown(data, scoreResult) {
       lines.push('');
       [['Site / business name', bc.siteName], ['Schema type', bc.schemaType], ['What this page is about', bc.about],
         ['Location', bc.locality], ['Telephone', bc.telephone],
-        ['Social profiles', bc.socialProfiles && bc.socialProfiles.length ? bc.socialProfiles.join(', ') : null]]
+        ['Social profiles', bc.socialProfiles && bc.socialProfiles.length ? bc.socialProfiles.join(', ') : null],
+        ['Review platforms', bc.reviewPlatforms && bc.reviewPlatforms.length ? bc.reviewPlatforms.join(', ') : null]]
         .filter(([, v]) => v).forEach(([l, v]) => lines.push(`- **${l}**: ${v}`));
       lines.push('');
     }
@@ -374,7 +407,7 @@ function toMarkdown(data, scoreResult) {
       lines.push('These are two separate things: an AI app-builder is not itself an SEO fault, so a generated site that server-renders and has real copy scores 100 above. Only the faults below deduct.');
       lines.push('');
       if (vc.servedWords != null) {
-        lines.push(`**Served HTML**: ${vc.servedWords} of ${vc.renderedWords} words are present before JavaScript runs — what a non-executing crawler sees.`);
+        lines.push(`**Served HTML**: ${scorlyServedWordsText(vc.servedWords, vc.renderedWords)} words are present before JavaScript runs — what a non-executing crawler sees.`);
         lines.push('');
       }
       lines.push('**Faults that cost visibility**');
@@ -493,7 +526,7 @@ function toMarkdown(data, scoreResult) {
       if (i.distorted) flags.push('distorted');
       if (i.hasExplicitSize === false) flags.push('no width/height');
       if (i.format && ['png', 'jpg', 'gif', 'bmp'].includes(i.format)) flags.push('legacy format');
-      return [i.src, flags.join(', ')];
+      return [displayImageSrc(i.src), flags.join(', ')];
     }));
     if (m.problemImages.length > 30) lines.push(`_…and ${m.problemImages.length - 30} more image(s) with issues._`, '');
   }
@@ -568,6 +601,7 @@ function toMarkdown(data, scoreResult) {
       ['Content-Security-Policy', data.securityHeaders.csp ? 'Set' : 'Not set'],
       ['X-Content-Type-Options', data.securityHeaders.xContentTypeOptions || 'Not set'],
       ['X-Frame-Options', data.securityHeaders.xFrameOptions || 'Not set'],
+      ...('referrerPolicy' in data.securityHeaders ? [['Referrer-Policy', data.securityHeaders.referrerPolicy || 'Not set'], ['Permissions-Policy', data.securityHeaders.permissionsPolicy ? 'Set' : 'Not set']] : []),
     ]);
   }
   if (data.hygiene) {
@@ -580,11 +614,22 @@ function toMarkdown(data, scoreResult) {
     lines.push('## Mobile');
     lines.push('');
     const parts = [];
-    if (data.mobile.tapTargets) parts.push(`${data.mobile.tapTargets.small} of ${data.mobile.tapTargets.checked} tap targets smaller than 44×44px`);
+    if (data.mobile.tapTargets) parts.push(tapTargetSummary(data.mobile.tapTargets));
     if (data.mobile.fontSizes) parts.push(`${data.mobile.fontSizes.small} of ${data.mobile.fontSizes.checked} sampled text elements smaller than 12px`);
     if (data.hygiene && data.hygiene.mediaQueries) parts.push(`${data.hygiene.mediaQueries.count} @media rule(s) in ${data.hygiene.mediaQueries.readable} readable stylesheet(s)`);
     lines.push(parts.join(' · '));
     lines.push('');
+  }
+
+  // ---- Accessibility ----
+  if (data.a11y) {
+    lines.push('## Accessibility');
+    lines.push('');
+    lines.push(a11ySummary(data.a11y).join(' · '));
+    lines.push('');
+    if (data.a11y.contrast.samples.length) {
+      table(['Text', 'Contrast', 'Colours'], data.a11y.contrast.samples.map((x) => [x.text, `${x.ratio}:1 (needs ${x.need}:1)`, `${x.fg} on ${x.bg}`]));
+    }
   }
 
   // ---- Full checklist appendix ----
@@ -877,7 +922,7 @@ function exportPdf(data, scoreResult) {
   y += 56;
 
   heading('Category Scores', 13);
-  Object.keys(CATEGORY_LABELS).forEach((key) => scoreBarRow(CATEGORY_LABELS[key], scoreResult.categoryScores[key]));
+  Object.keys(CATEGORY_LABELS).forEach((key) => { if (scoreResult.categoryScores[key] != null) scoreBarRow(CATEGORY_LABELS[key], scoreResult.categoryScores[key]); });
   spacer(6);
 
   // =========================================================================
@@ -928,6 +973,7 @@ function exportPdf(data, scoreResult) {
         ['Site / business name', bc.siteName], ['Schema type', bc.schemaType], ['About', bc.about],
         ['Location', bc.locality], ['Telephone', bc.telephone],
         ['Social profiles', bc.socialProfiles && bc.socialProfiles.length ? bc.socialProfiles.join(', ') : null],
+        ['Review platforms', bc.reviewPlatforms && bc.reviewPlatforms.length ? bc.reviewPlatforms.join(', ') : null],
       ].filter(([, v]) => v));
     }
 
@@ -946,7 +992,7 @@ function exportPdf(data, scoreResult) {
     if (insights.vibeCode) {
       const vc = insights.vibeCode;
       subheading(`Vibe-code detection — ${vc.buildScore}/100 build quality; verdict ${vc.band} (${vc.score}/100 confidence)`);
-      paragraph(`${vc.builders.length ? `Builder: ${vc.builders.map((b) => b.name).join(', ')}. ` : ''}${vc.servedWords != null ? `A non-JavaScript crawler sees ${vc.servedWords} of ${vc.renderedWords} words. ` : ''}An AI app-builder is not itself an SEO fault — only the faults below deduct${vc.penalty ? ` (${vc.penalty} AI Visibility points)` : ' (none here)'}.`, 8.5, COLOR.muted);
+      paragraph(`${vc.builders.length ? `Builder: ${vc.builders.map((b) => b.name).join(', ')}. ` : ''}${vc.servedWords != null ? `A non-JavaScript crawler sees ${scorlyServedWordsText(vc.servedWords, vc.renderedWords).replace(/^All/, 'all')} words. ` : ''}An AI app-builder is not itself an SEO fault — only the faults below deduct${vc.penalty ? ` (${vc.penalty} AI Visibility points)` : ' (none here)'}.`, 8.5, COLOR.muted);
       if (vc.faults.length) vc.faults.forEach((f) => bullet(`${f.label} (-${f.points}) — ${f.detail}`));
       else bullet('No generated-site faults — whatever built this page, it did not leave the usual visibility problems behind.');
       if (vc.signals.length) vc.signals.slice(0, 8).forEach((f) => bullet(`Evidence: ${f.label} (${f.strength}) — ${f.detail}`));
@@ -1056,7 +1102,7 @@ function exportPdf(data, scoreResult) {
     if (i.distorted) flags.push('distorted');
     if (i.hasExplicitSize === false) flags.push('no width/height');
     if (i.format && ['png', 'jpg', 'gif', 'bmp'].includes(i.format)) flags.push('legacy format');
-    return [i.src, flags.join(', ')];
+    return [displayImageSrc(i.src), flags.join(', ')];
   }), [2.6, 1.4], { fontSize: 8, emptyText: 'No flagged images.' });
   if (m.problemImages.length > 30) paragraph(`…and ${m.problemImages.length - 30} more image(s) with issues.`, 8.5, COLOR.muted);
 
@@ -1133,6 +1179,7 @@ function exportPdf(data, scoreResult) {
       ['Content-Security-Policy', data.securityHeaders.csp ? 'Set' : 'Not set'],
       ['X-Content-Type-Options', data.securityHeaders.xContentTypeOptions || 'Not set'],
       ['X-Frame-Options', data.securityHeaders.xFrameOptions || 'Not set'],
+      ...('referrerPolicy' in data.securityHeaders ? [['Referrer-Policy', data.securityHeaders.referrerPolicy || 'Not set'], ['Permissions-Policy', data.securityHeaders.permissionsPolicy ? 'Set' : 'Not set']] : []),
     ], [1.2, 2]);
   }
   if (data.hygiene) {
@@ -1142,10 +1189,19 @@ function exportPdf(data, scoreResult) {
   if (data.mobile) {
     heading('Mobile', 16);
     const parts = [];
-    if (data.mobile.tapTargets) parts.push(`${data.mobile.tapTargets.small} of ${data.mobile.tapTargets.checked} tap targets smaller than 44×44px`);
+    if (data.mobile.tapTargets) parts.push(tapTargetSummary(data.mobile.tapTargets));
     if (data.mobile.fontSizes) parts.push(`${data.mobile.fontSizes.small} of ${data.mobile.fontSizes.checked} sampled text elements smaller than 12px`);
     if (data.hygiene && data.hygiene.mediaQueries) parts.push(`${data.hygiene.mediaQueries.count} @media rule(s) in ${data.hygiene.mediaQueries.readable} readable stylesheet(s)`);
     paragraph(parts.join('  ·  '), 9.5);
+  }
+
+  if (data.a11y) {
+    heading('Accessibility', 16);
+    paragraph(a11ySummary(data.a11y).join('  ·  '), 9.5);
+    if (data.a11y.contrast.samples.length) {
+      spacer(4);
+      table(['Text', 'Contrast', 'Colours'], data.a11y.contrast.samples.map((x) => [x.text, `${x.ratio}:1 (needs ${x.need}:1)`, `${x.fg} on ${x.bg}`]), [2, 1.1, 1.3], { fontSize: 8 });
+    }
   }
 
   // =========================================================================

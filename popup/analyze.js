@@ -190,6 +190,17 @@ async function scorlyFetchServedDocument(url, ms, maxBytes = 600000) {
         csp: res.headers.get('content-security-policy'),
         xContentTypeOptions: res.headers.get('x-content-type-options'),
         xFrameOptions: res.headers.get('x-frame-options'),
+        referrerPolicy: res.headers.get('referrer-policy'),
+        permissionsPolicy: res.headers.get('permissions-policy'),
+        // Indexing directives and a canonical can also arrive as headers,
+        // where no amount of reading the DOM will find them.
+        xRobotsTag: res.headers.get('x-robots-tag'),
+        linkCanonical: (() => {
+          const link = res.headers.get('link') || '';
+          const m = link.match(/<([^>]+)>\s*;[^,]*rel="?canonical"?/i);
+          if (!m) return null;
+          try { return new URL(m[1], url).href; } catch (e) { return m[1]; }
+        })(),
       },
       served: scorlyDescribeServedHtml(html, res),
     };

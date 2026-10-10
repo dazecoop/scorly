@@ -46,14 +46,15 @@ press Save.
 ## What it does
 
 **Scores the whole page, not just the title tag.** One overall score (0–100)
-broken into 8 categories — Technical, Content, Perf, Schema, Security,
-Mobile, AI Visibility, E-E-A-T — each with its own bar, so you can see
+broken into 9 categories — Technical, Content, Perf, Schema, Security,
+Mobile, Accessibility, AI Visibility, E-E-A-T — each with its own bar, so you can see
 exactly which part of the page is dragging the score down.
 
-**Explains every check.** 14 tabs of detail: Overview with a SERP preview,
-AI Insights, Meta, Content (readability, word/sentence stats, top keywords),
+**Explains every check.** 15 tabs of detail: Overview with a SERP preview,
+AI Insights, Meta, Content (readability and grade level, word/sentence stats, top keywords and phrases),
 H Tags, Links, Internal/External link lists, Images (alt-text audit), Schema
-(JSON-LD viewer), Tech, Perf (TTFB, requests, transfer size), Security, and
+(JSON-LD viewer), Tech, Perf (TTFB, requests, transfer size), Security,
+Access (colour contrast, form labels, button names, skip link, landmarks), and
 Open Graph Preview. Every check is tagged pass / warn / fail with a severity,
 and rolled up into the Issues / Warnings / Passed counts on the Overview tab.
 
@@ -214,7 +215,7 @@ popup/
   analyze.js           Shared capture step: run the analyzer in a tab, add robots/sitemap/favicon
                        checks and read the page's served HTML + response headers
   snapshots.js         Local snapshot store (chrome.storage.local) for the compare view
-  scoring.js           Turns extracted data into 8 category scores + a severity-tagged checklist,
+  scoring.js           Turns extracted data into 9 category scores + a severity-tagged checklist,
                        plus the AI Visibility breakdown and the AI-copy / vibe-code detectors
   render.js            All DOM rendering for every tab
   export.js            JSON / CSV / PDF / Markdown generation

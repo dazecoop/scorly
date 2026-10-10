@@ -146,6 +146,61 @@ function scorlyValidateStructuredData(jsonLd) {
   return issues;
 }
 
+// ---------------------------------------------------------------------------
+// Entity / social helpers
+// ---------------------------------------------------------------------------
+// Re-derived here from the stored JSON-LD (rather than trusting flags the
+// analyzer captured) so that snapshots saved before these matchers were fixed
+// are scored correctly too. Mirrors ENTITY_TYPE_RE in inpage-analyzer.js,
+// which has to keep its own copy because it runs inside the page.
+const SCORLY_ENTITY_TYPE_RE = /(?:Organi[sz]ation|Business|Corporation)$|^(?:Airline|AccountingService|AnimalShelter|Attorney|AutoBodyShop|AutoDealer|AutoRepair|AutoWash|Bakery|BankOrCreditUnion|BarOrPub|BeautySalon|BedAndBreakfast|Brewery|CafeOrCoffeeShop|Campground|ChildCare|CollegeOrUniversity|Consortium|Cooperative|DaySpa|Dentist|Distillery|DryCleaningOrLaundry|Electrician|EmergencyService|EmploymentAgency|FinancialService|FoodEstablishment|GasStation|GeneralContractor|GovernmentOffice|HairSalon|HealthClub|Hospital|Hostel|Hotel|HousePainter|HVACBusiness|IceCreamShop|InsuranceAgency|LegalService|Library|Locksmith|MedicalClinic|Motel|MovingCompany|NailSalon|NGO|Notary|Optician|PerformingGroup|Pharmacy|Physician|Plumber|ProfessionalService|RealEstateAgent|Resort|Restaurant|FastFoodRestaurant|RoofingContractor|School|SelfStorage|ShoppingCenter|SportsTeam|Store|[A-Za-z]+Store|TattooParlor|TravelAgency|VeterinaryCare|Winery)$/;
+
+function scorlySchemaTypes(node) {
+  const t = node && node['@type'];
+  return (Array.isArray(t) ? t : t ? [t] : []).map((x) => String(x).replace(/^.*[/:#]/, ''));
+}
+
+// Breadth-first, so the top-level business wins over anything nested inside
+// it (a founder, a parentOrganization, a catalogue of offered Services).
+function scorlyFindSchemaNode(jsonLd, test) {
+  const queue = (jsonLd || []).slice();
+  for (let guard = 0; queue.length && guard < 5000; guard++) {
+    const node = queue.shift();
+    if (!node || typeof node !== 'object' || node.parseError) continue;
+    if (Array.isArray(node)) { node.forEach((n) => queue.push(n)); continue; }
+    if (test(node)) return node;
+    Object.keys(node).forEach((k) => { if (node[k] && typeof node[k] === 'object') queue.push(node[k]); });
+  }
+  return null;
+}
+
+// { entity, person } nodes from the JSON-LD, either of which may be null.
+function scorlyFindEntitySchema(jsonLd) {
+  return {
+    entity: scorlyFindSchemaNode(jsonLd, (n) => scorlySchemaTypes(n).some((t) => SCORLY_ENTITY_TYPE_RE.test(t))),
+    person: scorlyFindSchemaNode(jsonLd, (n) => scorlySchemaTypes(n).indexOf('Person') >= 0),
+  };
+}
+
+// Social-network hosts, matched on the whole domain. Older captures matched
+// /x\.com/ anywhere in the URL and stored hosts such as "dazemx.com" as an X
+// profile; filtering here cleans those up without a re-capture.
+const SCORLY_SOCIAL_DOMAINS = ['facebook.com', 'instagram.com', 'linkedin.com', 'x.com', 'twitter.com', 'youtube.com', 'tiktok.com', 'pinterest.com', 'pinterest.co.uk', 'threads.net', 'bsky.app', 'mastodon.social'];
+function scorlySocialProfiles(data) {
+  const list = (data.trustSignals && data.trustSignals.socialProfiles) || [];
+  return list.filter((h) => SCORLY_SOCIAL_DOMAINS.some((d) => h === d || h.slice(-(d.length + 1)) === '.' + d));
+}
+
+// "N of M words" for the served-vs-rendered comparison. The two counts come
+// from different tokenisers (tag-stripped HTML vs innerText, which skips
+// hidden menus and screen-reader-only text), so a fully server-rendered page
+// can come out with more served words than rendered ones. "747 of 729" reads
+// as a bug, so anything at or over 100% is reported as all of them.
+function scorlyServedWordsText(servedWords, renderedWords) {
+  if (servedWords == null) return null;
+  return servedWords >= renderedWords ? `All ${renderedWords}` : `${servedWords} of ${renderedWords}`;
+}
+
 function scorlyComputeScore(data) {
 
   function makeCategory() {
@@ -191,11 +246,22 @@ function scorlyComputeScore(data) {
   content.add('headings', 'Heading structure', data.headings.counts.h2 > 0 ? 'pass' : 'warn',
     `H2: ${data.headings.counts.h2}, H3: ${data.headings.counts.h3}, H4: ${data.headings.counts.h4}`, 'low');
 
+  // Skipped heading levels — only captured since the check landed.
+  if (data.headings.skips) {
+    const sk = data.headings.skips;
+    if (!sk.length) content.add('headingorder', 'Heading hierarchy', 'pass', `All ${data.headings.list.length} headings step down one level at a time.`);
+    else content.add('headingorder', 'Heading hierarchy', 'warn',
+      `${sk.length} skipped level(s): ${sk.slice(0, 3).map((x) => `H${x.from} → H${x.to} ("${x.text.slice(0, 40)}")`).join('; ')}. Jumping levels breaks the outline screen readers and engines build from your headings.`, 'low');
+  }
+
   if (data.content.wordCount < 150) content.add('wordcount', 'Content length', 'warn', `${data.content.wordCount} words — thin content may rank poorly.`, 'med');
   else content.add('wordcount', 'Content length', 'pass', `${data.content.wordCount} words.`);
 
+  // alt="" marks an image as decorative and is correct markup; captures
+  // since that distinction landed report those separately (decorative).
+  const decorativeNote = data.images.decorative ? ` (${data.images.decorative} marked decorative with alt="")` : '';
   if (data.images.total === 0) content.add('imgalt', 'Image alt text', 'pass', 'No images on page.');
-  else if (data.images.missingAlt === 0) content.add('imgalt', 'Image alt text', 'pass', `All ${data.images.total} images have alt text.`);
+  else if (data.images.missingAlt === 0) content.add('imgalt', 'Image alt text', 'pass', `All ${data.images.total} images have an alt attribute${decorativeNote}.`);
   else {
     const ratio = data.images.missingAlt / data.images.total;
     content.add('imgalt', 'Image alt text', ratio > 0.5 ? 'fail' : 'warn', `${data.images.missingAlt} of ${data.images.total} images missing alt text.`, ratio > 0.5 ? 'high' : 'med');
@@ -215,9 +281,19 @@ function scorlyComputeScore(data) {
     content.add('anchortext', 'Link anchor text', 'pass', 'All links have accessible anchor text.');
   }
 
-  if (data.content.readability >= 60) content.add('readability', 'Readability', 'pass', `Flesch reading ease ≈ ${data.content.readability}/100 (easy to read).`);
-  else if (data.content.readability >= 30) content.add('readability', 'Readability', 'warn', `Flesch reading ease ≈ ${data.content.readability}/100 (fairly difficult).`, 'low');
-  else content.add('readability', 'Readability', 'warn', `Flesch reading ease ≈ ${data.content.readability}/100 (difficult to read).`, 'med');
+  const grade = data.content.gradeLevel != null ? `, US grade ≈ ${data.content.gradeLevel}` : '';
+  if (data.content.readability >= 60) content.add('readability', 'Readability', 'pass', `Flesch reading ease ≈ ${data.content.readability}/100${grade} (easy to read).`);
+  else if (data.content.readability >= 30) content.add('readability', 'Readability', 'warn', `Flesch reading ease ≈ ${data.content.readability}/100${grade} (fairly difficult).`, 'low');
+  else content.add('readability', 'Readability', 'warn', `Flesch reading ease ≈ ${data.content.readability}/100${grade} (difficult to read).`, 'med');
+
+  // Keyword stuffing. Density is measured against every word on the page,
+  // and only flagged well above what natural copy reaches: a business name
+  // or the one service a page is about will legitimately run at 2–3%.
+  const topKw = (data.content.topKeywords || [])[0];
+  if (topKw && data.content.wordCount >= 200) {
+    if (topKw.pct > 4) content.add('stuffing', 'Keyword density', 'warn', `"${topKw.word}" is ${topKw.pct}% of all words (${topKw.count}×) — this reads as keyword stuffing to engines and to people. Natural copy rarely passes 3%.`, 'low');
+    else content.add('stuffing', 'Keyword density', 'pass', `Most frequent term "${topKw.word}" is ${topKw.pct}% of ${data.content.wordCount} words — no sign of keyword stuffing.`);
+  }
 
   if (data.content.emptyBoldCount > 0) {
     content.add('emptytags', 'Empty bold/strong tags', 'warn', `${data.content.emptyBoldCount} empty <b>/<strong> tag(s) found — remove or fill them.`, 'low');
@@ -360,6 +436,59 @@ function scorlyComputeScore(data) {
     }
   }
 
+  // ---- Canonical and indexing directives ----
+  // URLs compared without fragment or trailing slash: "/page" and "/page/"
+  // are the same canonical for this purpose.
+  const normUrl = (u) => String(u || '').split('#')[0].replace(/\/+$/, '').toLowerCase();
+  const sh0 = data.securityHeaders || {};
+  const hh = data.hygiene && data.hygiene.htmlHygiene;
+  const xRobots = sh0.xRobotsTag || '';
+  const directives = ((data.robotsMeta || '') + ',' + xRobots).toLowerCase();
+  const noindex = /\bnoindex\b|\bnone\b/.test(directives);
+  if (data.canonical || (hh && hh.canonicalCount > 1) || sh0.linkCanonical) {
+    const problems = [];
+    if (hh && hh.canonicalCount > 1) problems.push(`${hh.canonicalCount} canonical tags on the page — engines may ignore all of them`);
+    if (sh0.linkCanonical && data.canonical && normUrl(sh0.linkCanonical) !== normUrl(data.canonical)) {
+      problems.push(`the HTTP Link header says ${sh0.linkCanonical} but the tag says ${data.canonical}`);
+    }
+    if (data.canonical && data.security.https && /^http:\/\//i.test(data.canonical)) problems.push('canonical points at the http:// version of an https page');
+    if (data.canonical && noindex) problems.push('the page is noindex but also declares a canonical — mixed signals; engines may drop the canonical target too');
+    if (problems.length) technical.add('canonicalconflict', 'Canonical consistency', 'warn', problems.join('; ') + '.', 'med');
+    else technical.add('canonicalconflict', 'Canonical consistency', 'pass',
+      data.canonical && normUrl(data.canonical) === normUrl(data.url) ? 'One self-referencing canonical, consistent with any HTTP header.' : 'One canonical, consistent with any HTTP header.');
+  }
+  if (sh0.xRobotsTag !== undefined && sh0.xRobotsTag && /\bnoindex\b|\bnone\b/i.test(sh0.xRobotsTag)) {
+    technical.add('xrobots', 'X-Robots-Tag header', 'fail', `The server sends "X-Robots-Tag: ${sh0.xRobotsTag}" — this page is kept out of search results regardless of its HTML.`, 'high');
+  }
+  // Snippet controls: the page can be indexed but its text cannot be shown
+  // (or quoted by AI search features that honour the same directives).
+  const snippetBlock = /\bnosnippet\b|max-snippet\s*:\s*0\b/.test(directives);
+  if (data.robotsMeta || xRobots) {
+    technical.add('snippets', 'Search snippets allowed', snippetBlock ? 'warn' : 'pass',
+      snippetBlock ? `Robots directives ("${(data.robotsMeta || xRobots).slice(0, 80)}") block text snippets — results show a bare link and AI search features cannot quote the page.`
+        : 'No nosnippet / max-snippet:0 directive — engines may show and quote the page text.', snippetBlock ? 'med' : 'low');
+  }
+
+  // ---- In-page links and head hygiene (newer captures only) ----
+  if (data.hygiene && data.hygiene.brokenFragmentCount !== undefined) {
+    const hy = data.hygiene;
+    if (!hy.brokenFragmentCount) technical.add('fragments', 'In-page anchor links', 'pass', 'Every #fragment link points at an element that exists.');
+    else technical.add('fragments', 'In-page anchor links', 'warn',
+      `${hy.brokenFragmentCount} link(s) jump to an id that is not on the page: ${hy.brokenFragments.slice(0, 4).join(', ')}.`, 'low');
+    if (!hy.badContactLinks.length) technical.add('contactlinks', 'tel: / mailto: links', 'pass', 'All phone and email links are well-formed.');
+    else technical.add('contactlinks', 'tel: / mailto: links', 'warn',
+      `${hy.badContactLinks.length} malformed link(s) a phone or mail app cannot use: ${hy.badContactLinks.slice(0, 3).join(', ')}.`, 'med');
+  }
+  if (hh) {
+    const issues = [];
+    if (hh.titleCount > 1) issues.push(`${hh.titleCount} <title> elements`);
+    if (hh.descriptionCount > 1) issues.push(`${hh.descriptionCount} meta descriptions`);
+    if (hh.robotsMetaCount > 1) issues.push(`${hh.robotsMetaCount} robots meta tags`);
+    if (hh.metaInBody > 0) issues.push(`${hh.metaInBody} meta tag(s) inside <body>, where crawlers may ignore them`);
+    technical.add('headhygiene', 'Head tags', issues.length ? 'warn' : 'pass',
+      issues.length ? `${issues.join('; ')} — engines pick one, and it may not be the one you meant.` : 'One title, one description, and no SEO meta tags stranded in <body>.', issues.length ? 'med' : 'low');
+  }
+
   // ===================== MOBILE =====================
   const mobile = makeCategory();
   mobile.add('viewport', 'Responsive viewport', data.viewport ? 'pass' : 'fail',
@@ -373,9 +502,21 @@ function scorlyComputeScore(data) {
   if (data.mobile && data.mobile.tapTargets && data.mobile.tapTargets.checked > 0) {
     const tt = data.mobile.tapTargets;
     const ratio = tt.small / tt.checked;
-    if (ratio === 0) mobile.add('taptargets', 'Tap target size', 'pass', `All ${tt.checked} checked tap targets are at least 44×44px.`);
-    else mobile.add('taptargets', 'Tap target size', ratio > 0.3 ? 'fail' : 'warn',
-      `${tt.small} of ${tt.checked} tap targets (links/buttons) are smaller than the recommended 44×44px minimum.`, ratio > 0.3 ? 'high' : 'med');
+    if (tt.threshold) {
+      // WCAG 2.2 target size (2.5.8): 24×24px, with links inside sentences
+      // and well-spaced targets exempt — see the analyzer.
+      const exempt = [tt.inlineExempt ? `${tt.inlineExempt} inline text link(s)` : null, tt.spacedExempt ? `${tt.spacedExempt} small but well-spaced` : null].filter(Boolean);
+      const exemptNote = exempt.length ? ` (exempt: ${exempt.join(', ')})` : '';
+      if (tt.small === 0) mobile.add('taptargets', 'Tap target size', 'pass', `All ${tt.checked} tap targets meet the 24×24px WCAG minimum or have room around them${exemptNote}.`);
+      else mobile.add('taptargets', 'Tap target size', ratio > 0.25 ? 'fail' : 'warn',
+        `${tt.small} of ${tt.checked} tap targets are under 24×24px and crowded by a neighbour, so they are easy to mis-tap${tt.samples && tt.samples.length ? `: ${tt.samples.slice(0, 3).join(', ')}` : ''}.`, ratio > 0.25 ? 'high' : 'med');
+    } else {
+      // Captured before the WCAG rule: measured against 44px with no
+      // exemptions, which flags almost every footer. Shown, but softened.
+      if (ratio === 0) mobile.add('taptargets', 'Tap target size', 'pass', `All ${tt.checked} checked tap targets are at least 44×44px.`);
+      else mobile.add('taptargets', 'Tap target size', 'warn',
+        `${tt.small} of ${tt.checked} tap targets are under 44×44px (older capture, measured without the WCAG exemptions for inline and well-spaced links — re-analyze for the current check).`, 'low');
+    }
   }
   if (data.hygiene && data.hygiene.mediaQueries && data.hygiene.mediaQueries.readable > 0) {
     const mq = data.hygiene.mediaQueries;
@@ -411,6 +552,11 @@ function scorlyComputeScore(data) {
   }
   schema.add('og', 'Open Graph tags', Object.keys(data.og.raw || {}).length > 0 ? 'pass' : 'warn',
     Object.keys(data.og.raw || {}).length > 0 ? `${Object.keys(data.og.raw).length} Open Graph tags found.` : 'No Open Graph tags found.', 'med');
+  if (data.og && data.og.url && data.canonical) {
+    const same = normUrl(data.og.url) === normUrl(data.canonical);
+    schema.add('ogurl', 'og:url matches canonical', same ? 'pass' : 'warn',
+      same ? 'og:url and the canonical point at the same URL.' : `og:url (${data.og.url}) differs from the canonical (${data.canonical}) — shares and likes get split across two URLs.`, same ? 'low' : 'med');
+  }
   schema.add('twitter', 'Twitter Card tags', Object.keys(data.twitter.raw || {}).length > 0 ? 'pass' : 'warn',
     Object.keys(data.twitter.raw || {}).length > 0 ? `${Object.keys(data.twitter.raw).length} Twitter Card tags found.` : 'No Twitter Card tags found.', 'low');
 
@@ -526,6 +672,44 @@ function scorlyComputeScore(data) {
     perf.add('cdn', 'CDN usage', 'pass', `Assets served via: ${data.hygiene.cdns.join(', ')}.`, 'low');
   }
 
+  // ---- LCP element: what it was, and whether it was loaded like one ----
+  // Only when the browser reported an LCP (not in background-tab captures).
+  const le = data.lcpElement;
+  if (le && le.isImage) {
+    const file = (() => { try { return new URL(le.url).pathname.split('/').pop(); } catch (e) { return le.url; } })();
+    if (le.loading === 'lazy') {
+      perf.add('lcpload', 'LCP image loading', 'fail', `The LCP element is an image (${file}) marked loading="lazy" — the browser waits for layout before fetching the most important image on the page. Remove loading="lazy" from it.`, 'high');
+    } else if (le.fetchpriority === 'high' || le.preloaded) {
+      perf.add('lcpload', 'LCP image loading', 'pass', `The LCP image (${file}) is ${[le.fetchpriority === 'high' ? 'fetchpriority="high"' : null, le.preloaded ? 'preloaded' : null].filter(Boolean).join(' and ')} — fetched as early as possible.`);
+    } else {
+      perf.add('lcpload', 'LCP image loading', 'warn', `The LCP image (${file}) has no fetchpriority="high" and no <link rel="preload"> — it queues behind scripts and styles. Adding fetchpriority="high" typically cuts LCP by 5–30%.`, 'low');
+    }
+  } else if (le && le.tag) {
+    perf.add('lcpload', 'LCP element', 'pass', `The LCP element is text (<${le.tag}>${le.text ? ` "${le.text.slice(0, 40)}"` : ''}) — no image fetch on the critical path.`, 'low');
+  }
+
+  // ---- Image delivery (newer captures only) ----
+  const im = data.images;
+  if (im && im.lazyAboveFold !== undefined && im.total > 0) {
+    if (im.lazyAboveFold > 0) perf.add('lazyabove', 'Lazy-loading above the fold', 'warn', `${im.lazyAboveFold} image(s) visible on first paint are marked loading="lazy", which delays them. Lazy-load only what starts below the fold.`, 'med');
+    else perf.add('lazyabove', 'Lazy-loading above the fold', 'pass', 'No image visible on first paint is lazy-loaded.');
+    if (im.eagerBelowFold > 0) perf.add('lazybelow', 'Lazy-loading below the fold', 'warn', `${im.eagerBelowFold} image(s) well below the fold load eagerly — add loading="lazy" so they do not compete with the first screen.`, 'low');
+    else perf.add('lazybelow', 'Lazy-loading below the fold', 'pass', 'Images below the fold are lazy-loaded (or there are none).');
+    if (im.largeWithoutSrcset > 0) perf.add('srcset', 'Responsive images (srcset)', 'warn', `${im.largeWithoutSrcset} large image(s) have no srcset/sizes, so phones download the full desktop file.`, 'low');
+    else perf.add('srcset', 'Responsive images (srcset)', 'pass', 'Large images offer srcset alternatives (or there are none).');
+  }
+
+  // ---- Web-font loading ----
+  const fonts = data.hygiene && data.hygiene.fonts;
+  if (fonts && (fonts.faces || fonts.googleFonts || fonts.fileCount)) {
+    const problems = [];
+    if (fonts.facesBlocking) problems.push(`${fonts.facesBlocking} of ${fonts.faces} @font-face rule(s) have no font-display (text stays invisible while the font loads)`);
+    if (fonts.googleFontsNoSwap) problems.push(`${fonts.googleFontsNoSwap} Google Fonts link(s) without &display=swap`);
+    const note = fonts.preloaded ? ` ${fonts.preloaded} font file(s) preloaded.` : (fonts.fileCount ? ' Consider preloading the one or two fonts used above the fold.' : '');
+    if (problems.length) perf.add('fonts', 'Font loading', 'warn', problems.join('; ') + '.' + note, 'low');
+    else perf.add('fonts', 'Font loading', 'pass', `Web fonts swap in without hiding text.${note}`);
+  }
+
   const sizeKb = data.perf.transferSize / 1024;
   if (sizeKb <= 1024) perf.add('size', 'Transferred size', 'pass', `${sizeKb.toFixed(0)} KB.`);
   else if (sizeKb <= 3072) perf.add('size', 'Transferred size', 'warn', `${sizeKb.toFixed(0)} KB — on the heavier side.`, 'low');
@@ -563,6 +747,30 @@ function scorlyComputeScore(data) {
     const hasFrameAncestors = sh.csp && /frame-ancestors/i.test(sh.csp);
     security.add('xfo', 'Clickjacking protection', (sh.xFrameOptions || hasFrameAncestors) ? 'pass' : 'warn',
       sh.xFrameOptions ? `X-Frame-Options: ${sh.xFrameOptions}` : (hasFrameAncestors ? 'frame-ancestors set via CSP.' : 'No X-Frame-Options header or frame-ancestors CSP directive — page can be framed by other sites.'), 'low');
+    // Captured since these headers were added — the key is absent (not
+    // null) on older snapshots, which skip the checks.
+    if ('referrerPolicy' in sh) {
+      const rp = sh.referrerPolicy || data.metaReferrer;
+      security.add('referrer', 'Referrer-Policy', rp ? 'pass' : 'warn',
+        rp ? `Referrer-Policy: ${rp}${!sh.referrerPolicy ? ' (via <meta name="referrer">)' : ''}` : 'No Referrer-Policy — browsers fall back to strict-origin-when-cross-origin, which is safe; setting it explicitly documents the intent.', 'low');
+    }
+    if ('permissionsPolicy' in sh) {
+      security.add('permissions', 'Permissions-Policy', sh.permissionsPolicy ? 'pass' : 'warn',
+        sh.permissionsPolicy ? 'Permissions-Policy header present — unused browser features (camera, geolocation…) are switched off.' : 'No Permissions-Policy header — embedded third-party scripts can request camera, microphone or location.', 'low');
+    }
+    if (sh.hsts && data.security.https) {
+      const maxAge = parseInt((sh.hsts.match(/max-age\s*=\s*(\d+)/i) || [])[1] || '0', 10);
+      const days = Math.round(maxAge / 86400);
+      const preload = /preload/i.test(sh.hsts) && /includesubdomains/i.test(sh.hsts) && maxAge >= 31536000;
+      if (maxAge >= 31536000) security.add('hstsstrength', 'HSTS strength', 'pass', `max-age ${days} days${preload ? ', includeSubDomains and preload — eligible for the browser preload list' : ' — add includeSubDomains; preload to qualify for the browser preload list'}.`);
+      else security.add('hstsstrength', 'HSTS strength', 'warn', `max-age is ${days} days — at least 365 (31536000) is recommended, and required for the HSTS preload list.`, 'low');
+    }
+  }
+  if (data.hygiene && data.hygiene.leakedSecrets) {
+    const ls = data.hygiene.leakedSecrets;
+    if (!ls.length) security.add('secrets', 'Secrets in page source', 'pass', 'No API keys, tokens or private keys found in the HTML or inline scripts.');
+    else security.add('secrets', 'Secrets in page source', 'fail',
+      `${ls.length} credential(s) shipped to every visitor: ${ls.slice(0, 3).map((x) => `${x.kind} (${x.redacted})`).join(', ')}. Revoke and rotate them now — anything in the page source is public.`, 'high');
   }
 
   // ===================== AI SEO (heuristic) =====================
@@ -611,6 +819,14 @@ function scorlyComputeScore(data) {
     }
   }
 
+  // Schema drift: the business facts in JSON-LD should be visible on the page.
+  if (data.schemaDrift && data.schemaDrift.checks.length) {
+    const sd = data.schemaDrift;
+    if (!sd.mismatches.length) aiSeo.add('schemadrift', 'Schema matches visible text', 'pass', `The ${sd.checks.map((c) => c.field).join(', ')} in structured data all appear on the page.`);
+    else aiSeo.add('schemadrift', 'Schema matches visible text', 'warn',
+      `Structured data says ${sd.mismatches.map((m) => `${m.field} "${m.value}"`).join(', ')}, but the page never shows it. Markup that disagrees with the visible content is discounted — or it is stale.`, 'med');
+  }
+
   // AI-written copy and generated-boilerplate markup. Both deduct from the
   // AI Visibility number (see scorlyComputeAiVisibility) and both are
   // guarded, because an old saved snapshot has neither field and must not
@@ -653,12 +869,26 @@ function scorlyComputeScore(data) {
 
   // ===================== E-E-A-T (heuristic) =====================
   const eeat = makeCategory();
-  eeat.add('author', 'Author byline', data.eeat.hasAuthorByline ? 'pass' : 'warn',
-    data.eeat.hasAuthorByline ? 'Author information found.' : 'No author byline or meta author tag detected.', 'med');
+  const entitySchema = scorlyFindEntitySchema(data.jsonLd);
+  const ai0 = data.eeat.authorInfo;
+  if (ai0) {
+    // A named person is what this check is after. A meta author tag that only
+    // repeats the business name is noted, not credited.
+    const who = ai0.byline ? `byline "${ai0.byline}"` : ai0.schemaAuthor ? `schema author "${ai0.schemaAuthor}"` : (ai0.meta && !ai0.metaIsOrg) ? `meta author "${ai0.meta}"`
+      : ai0.person ? `${ai0.person}${typeof ai0.personRole === 'string' ? ` (${ai0.personRole})` : ''}, named as a Person in structured data` : null;
+    if (who) eeat.add('author', 'Author / named person', 'pass', `Identifiable person behind the content: ${who}.`);
+    else if (ai0.meta) eeat.add('author', 'Author / named person', 'warn', `Only a meta author tag naming the business ("${ai0.meta}") — no person is named. A byline, or the owner as a Person in schema, gives engines someone accountable.`, 'low');
+    else eeat.add('author', 'Author / named person', 'warn', 'No byline, author or named person found — nothing says who is behind the content.', 'med');
+  } else {
+    eeat.add('author', 'Author byline', data.eeat.hasAuthorByline ? 'pass' : 'warn',
+      data.eeat.hasAuthorByline ? 'Author information found.' : 'No author byline or meta author tag detected.', 'med');
+  }
   eeat.add('date', 'Published/updated date', data.eeat.hasPublishDate ? 'pass' : 'warn',
     data.eeat.hasPublishDate ? 'Publish/modified date found.' : 'No publish or last-updated date detected.', 'med');
-  eeat.add('org', 'Organization / Person schema', data.eeat.hasOrgOrPersonSchema ? 'pass' : 'warn',
-    data.eeat.hasOrgOrPersonSchema ? 'Organization or Person schema present.' : 'No Organization/Person schema found.', 'low');
+  const ent = entitySchema.entity;
+  eeat.add('org', 'Organization / Person schema', (ent || entitySchema.person) ? 'pass' : 'warn',
+    ent ? `${scorlySchemaTypes(ent).join(', ')}${typeof ent.name === 'string' ? ` "${ent.name}"` : ''} — an Organization type, so engines can tie the page to a real entity.`
+      : entitySchema.person ? 'Person schema present.' : 'No Organization (or subtype such as LocalBusiness) or Person schema found.', 'low');
   // These are name-matching heuristics: they scan every link's URL and
   // anchor text on THIS page for common names of the page type. The details
   // name the matched term (pass) or the terms searched for (fail), so a
@@ -678,13 +908,27 @@ function scorlyComputeScore(data) {
   // fault, so a missing network is never its own red flag. What search
   // engines actually use is the entity link (sameAs / a profile link that
   // corroborates the business exists).
+  if (data.trustSignals && data.trustSignals.hasTermsLink !== undefined) {
+    eeat.add('terms', 'Terms linked', data.trustSignals.hasTermsLink ? 'pass' : 'warn',
+      data.trustSignals.hasTermsLink ? 'Found a link to terms / terms of service.' : 'No link matching "terms" — terms of business or service are a baseline trust signal, especially where people pay.', 'low');
+  }
+  // Independent proof: review schema, links to third-party review platforms
+  // (which a site cannot fake), or a testimonials section.
+  if (data.trustSignals && data.trustSignals.reviewPlatforms !== undefined) {
+    const ts0 = data.trustSignals;
+    const bits = [ts0.hasReviewSignal ? 'review/rating markup' : null,
+      ts0.reviewPlatforms.length ? `links to ${ts0.reviewPlatforms.join(', ')}` : null,
+      ts0.hasTestimonials ? 'a testimonials section' : null].filter(Boolean);
+    eeat.add('proof', 'Reviews & third-party proof', bits.length ? 'pass' : 'warn',
+      bits.length ? `Found ${bits.join(', ')}.${!ts0.hasReviewSignal ? ' Review/AggregateRating markup would let ratings show in results.' : ''}` : 'No reviews, testimonials or links to a review platform (Google, Trustpilot, Checkatrade…). Independent proof is the strongest trust signal a small business has.', 'low');
+  }
   if (data.trustSignals && data.trustSignals.socialProfiles) {
     const NAMES = {
       'facebook.com': 'Facebook', 'instagram.com': 'Instagram', 'linkedin.com': 'LinkedIn',
       'x.com': 'X', 'twitter.com': 'X/Twitter', 'youtube.com': 'YouTube',
       'tiktok.com': 'TikTok',
     };
-    const profiles = data.trustSignals.socialProfiles;
+    const profiles = scorlySocialProfiles(data);
     const names = profiles.map((h) => NAMES[h] || (/^pinterest\./.test(h) ? 'Pinterest' : h));
     const sameAs = (data.businessContext && data.businessContext.sameAsCount) || 0;
     if (!profiles.length) {
@@ -701,9 +945,57 @@ function scorlyComputeScore(data) {
   eeat.add('https', 'Trust signal: HTTPS', (data.isLocalhost || data.security.https) ? 'pass' : 'fail',
     data.isLocalhost ? 'Localhost — skipped.' : (data.security.https ? 'Secure connection.' : 'Not served over HTTPS.'), 'high');
 
-  const categories = { technical, content, perf, schema, security, mobile, aiSeo, eeat };
+  // ===================== ACCESSIBILITY =====================
+  // Captured since the a11y block landed; older snapshots have no checks
+  // here and get a null category score (excluded from the overall) rather
+  // than a free 100.
+  const a11y = makeCategory();
+  const ax = data.a11y;
+  if (ax) {
+    const c = ax.contrast;
+    if (c.checked > 0) {
+      const ratio = c.failing / c.checked;
+      const worst = c.samples.slice(0, 3).map((x) => `"${x.text.slice(0, 30)}" ${x.ratio}:1 (${x.fg} on ${x.bg})`).join('; ');
+      if (!c.failing) a11y.add('contrast', 'Colour contrast', 'pass', `All ${c.checked} sampled text elements meet WCAG AA contrast (4.5:1, or 3:1 for large text)${c.skipped ? `; ${c.skipped} over images or gradients could not be judged` : ''}.`);
+      else a11y.add('contrast', 'Colour contrast', ratio > 0.2 ? 'fail' : 'warn',
+        `${c.failing} of ${c.checked} sampled text elements fall below WCAG AA contrast: ${worst}.`, ratio > 0.2 ? 'high' : 'med');
+    }
+    if (ax.forms.fields > 0) {
+      if (!ax.forms.unlabelled) a11y.add('labels', 'Form field labels', 'pass', `All ${ax.forms.fields} form field(s) have a label.`);
+      else a11y.add('labels', 'Form field labels', 'fail',
+        `${ax.forms.unlabelled} of ${ax.forms.fields} form field(s) have no label${ax.forms.placeholderOnly ? ` (${ax.forms.placeholderOnly} rely on placeholder text, which disappears as soon as you type)` : ''}: ${ax.forms.samples.slice(0, 3).join(', ')}.`, 'high');
+    }
+    if (!ax.namelessButtons.count) a11y.add('buttonnames', 'Button names', 'pass', 'Every button has an accessible name.');
+    else a11y.add('buttonnames', 'Button names', 'fail', `${ax.namelessButtons.count} button(s) with no text or aria-label — a screen reader announces just "button": ${ax.namelessButtons.samples.slice(0, 3).join(', ')}.`, 'high');
+    a11y.add('skiplink', 'Skip link', ax.skipLink ? 'pass' : 'warn',
+      ax.skipLink ? `Skip link to ${ax.skipLink} — keyboard users can bypass the navigation.` : 'No "skip to content" link among the first focusable elements — keyboard users tab through the whole menu on every page.', 'low');
+    const lm = ax.landmarks;
+    if (lm.main === 1) a11y.add('landmarks', 'Landmark regions', 'pass', `One <main>${lm.nav ? `, ${lm.nav} <nav>` : ''}${lm.header ? ', a header' : ''}${lm.footer ? ', a footer' : ''}.`);
+    else a11y.add('landmarks', 'Landmark regions', 'warn', lm.main === 0 ? 'No <main> landmark — screen-reader users cannot jump straight to the content.' : `${lm.main} <main> landmarks — there should be exactly one.`, 'med');
+    if (!ax.duplicateIds.count) a11y.add('dupids', 'Unique ids', 'pass', 'No duplicate id attributes.');
+    else a11y.add('dupids', 'Unique ids', 'warn', `${ax.duplicateIds.count} id(s) used more than once (${ax.duplicateIds.samples.slice(0, 4).join(', ')}) — labels, aria references and anchor links resolve to the first match only.`, 'low');
+    const f = ax.focus;
+    if (f.readableSheets > 0) {
+      const removed = f.outlineRemoved > 0 && f.focusVisibleRules === 0;
+      a11y.add('focus', 'Visible focus', removed ? 'warn' : 'pass',
+        removed ? `${f.outlineRemoved} :focus rule(s) remove the outline with no :focus-visible replacement — keyboard users cannot see where they are.` : 'Focus outlines are kept (or replaced with :focus-visible styles).', removed ? 'med' : 'low');
+    }
+    const kb = [];
+    if (ax.positiveTabindex) kb.push(`${ax.positiveTabindex} element(s) with a positive tabindex, which reorders keyboard focus`);
+    if (ax.hiddenFocusable) kb.push(`${ax.hiddenFocusable} focusable element(s) inside aria-hidden content — keyboard focus lands on something a screen reader cannot announce`);
+    a11y.add('keyboard', 'Keyboard order', kb.length ? 'warn' : 'pass', kb.length ? kb.join('; ') + '.' : 'No positive tabindex and nothing focusable hidden from screen readers.', kb.length ? 'med' : 'low');
+    const md = ax.media;
+    if (md.videos) a11y.add('captions', 'Video captions', md.videosWithoutCaptions ? 'warn' : 'pass',
+      md.videosWithoutCaptions ? `${md.videosWithoutCaptions} of ${md.videos} video(s) have no captions/subtitles track.` : `All ${md.videos} video(s) carry a captions track.`, md.videosWithoutCaptions ? 'med' : 'low');
+    if (md.autoplayWithSound) a11y.add('autoplay', 'Autoplaying sound', 'fail', `${md.autoplayWithSound} media element(s) autoplay with sound — this drowns out screen readers.`, 'high');
+    if (md.untitledIframes) a11y.add('iframes', 'Frame titles', 'warn', `${md.untitledIframes} iframe(s) have no title, so screen readers announce them only as "frame".`, 'low');
+    if (ax.tablesWithoutHeaders) a11y.add('tables', 'Table headers', 'warn', `${ax.tablesWithoutHeaders} data table(s) have no <th> header cells.`, 'low');
+  }
+
+  const categories = { technical, content, perf, schema, security, mobile, a11y, aiSeo, eeat };
   const categoryScores = {};
   Object.keys(categories).forEach((k) => { categoryScores[k] = categories[k].score(); });
+  if (!a11y.checks.length) categoryScores.a11y = null;
 
   // "AI Visibility" is the one AI-related number shown everywhere — the
   // Overview bar, exports, compare, and the AI Insights tab header. It
@@ -716,10 +1008,16 @@ function scorlyComputeScore(data) {
   // same number, not the superseded checklist ratio).
   categoryScores.aiSeo = scorlyComputeAiVisibility(data, categoryScores);
 
-  const WEIGHTS = { technical: 0.20, content: 0.20, perf: 0.10, schema: 0.10, security: 0.15, mobile: 0.10, aiSeo: 0.075, eeat: 0.075 };
-  let overallScore = 0;
-  Object.keys(WEIGHTS).forEach((k) => { overallScore += categoryScores[k] * WEIGHTS[k]; });
-  overallScore = Math.round(overallScore);
+  // A category with no score (Accessibility on a snapshot captured before it
+  // existed) drops out and the remaining weights are scaled up to fill it.
+  const WEIGHTS = { technical: 0.18, content: 0.18, perf: 0.10, schema: 0.08, security: 0.12, mobile: 0.08, a11y: 0.10, aiSeo: 0.08, eeat: 0.08 };
+  let overallScore = 0, weightUsed = 0;
+  Object.keys(WEIGHTS).forEach((k) => {
+    if (categoryScores[k] == null) return;
+    overallScore += categoryScores[k] * WEIGHTS[k];
+    weightUsed += WEIGHTS[k];
+  });
+  overallScore = Math.round(weightUsed ? overallScore / weightUsed : 0);
 
   const allChecks = [];
   Object.keys(categories).forEach((cat) => {
@@ -740,7 +1038,7 @@ function scorlyComputeScore(data) {
     categories: {
       technical: technical.checks, content: content.checks, perf: perf.checks,
       schema: schema.checks, security: security.checks, mobile: mobile.checks,
-      aiSeo: aiSeo.checks, eeat: eeat.checks,
+      a11y: a11y.checks, aiSeo: aiSeo.checks, eeat: eeat.checks,
     },
     allChecks,
     counts,
@@ -1132,13 +1430,15 @@ function scorlyComputeTrustBreakdown(data) {
   const pctOf = (items) => Math.round((items.filter(Boolean).length / items.length) * 100);
   const identity = pctOf([ts.hasPhone, ts.hasEmail, ts.hasAddress, ts.hasCompanyNumber || ts.hasVatNumber]);
   const transparency = pctOf([eeat.hasAboutLink, eeat.hasContactLink, eeat.hasPrivacyLink, ts.hasTermsLink]);
-  const evidence = pctOf([eeat.hasOrgOrPersonSchema, ts.hasReviewSignal, eeat.hasAuthorByline, (ts.socialProfiles || []).length > 0]);
+  const ent = scorlyFindEntitySchema(data.jsonLd);
+  const proof = ts.hasReviewSignal || (ts.reviewPlatforms || []).length > 0 || !!ts.hasTestimonials;
+  const evidence = pctOf([!!(ent.entity || ent.person), proof, eeat.hasAuthorByline, scorlySocialProfiles(data).length > 0]);
   return {
     score: Math.round(identity * 0.4 + transparency * 0.3 + evidence * 0.3),
     subs: [
       { label: 'Identity & contact', score: identity, detail: 'Phone, email, address, company/VAT number' },
       { label: 'Transparency', score: transparency, detail: 'About, contact, privacy and terms pages' },
-      { label: 'Evidence & proof', score: evidence, detail: 'Org/Person schema, reviews, authorship, social profiles' },
+      { label: 'Evidence & proof', score: evidence, detail: 'Org/Person schema, reviews or review-platform links, authorship, social profiles' },
     ],
   };
 }
@@ -1228,7 +1528,7 @@ function scorlyComputeAiVisibilityBreakdown(data, categoryScores) {
     trust += (ts.hasPhone || ts.hasEmail) ? 3 : 0;
     trust += ts.hasAddress ? 3 : 0;
     trust += ts.hasReviewSignal ? 2 : 0;
-    trust += (ts.socialProfiles && ts.socialProfiles.length) ? 2 : 0;
+    trust += scorlySocialProfiles(data).length ? 2 : 0;
   } else {
     trust += 5; // old snapshot — neutral middle
   }
@@ -1305,13 +1605,19 @@ function scorlyComputeAiInsights(data, scoreResult) {
   const now = new Date();
 
   // ---------- Domain / business context (detected, not generated) ----------
+  // The business node is re-found from the stored JSON-LD so a snapshot
+  // captured while the analyzer picked the wrong node (a nested Service
+  // rather than the business) still shows the right name and type.
+  const entityNow = scorlyFindEntitySchema(data.jsonLd).entity;
+  const entityAddr = entityNow && entityNow.address && typeof entityNow.address === 'object' ? (Array.isArray(entityNow.address) ? entityNow.address[0] : entityNow.address) : null;
   const businessContext = {
-    siteName: (bc && bc.siteName) || (data.og && data.og.siteName) || data.hostname || null,
-    schemaType: bc ? bc.schemaType : null,
-    about: (bc && bc.description) || (data.metaDescription && data.metaDescription.text) || data.firstParagraph || null,
-    locality: bc ? bc.locality : null,
-    telephone: bc ? bc.telephone : null,
-    socialProfiles: ts ? ts.socialProfiles || [] : [],
+    siteName: (entityNow && typeof entityNow.name === 'string' && entityNow.name) || (bc && bc.siteName) || (data.og && data.og.siteName) || data.hostname || null,
+    schemaType: entityNow ? scorlySchemaTypes(entityNow).join(', ') : (bc ? bc.schemaType : null),
+    about: (entityNow && typeof entityNow.description === 'string' && entityNow.description.slice(0, 300)) || (bc && bc.description) || (data.metaDescription && data.metaDescription.text) || data.firstParagraph || null,
+    locality: entityAddr ? [entityAddr.addressLocality, entityAddr.addressRegion, entityAddr.addressCountry].filter((v) => typeof v === 'string').join(', ') || null : (bc ? bc.locality : null),
+    telephone: (entityNow && typeof entityNow.telephone === 'string' && entityNow.telephone) || (bc ? bc.telephone : null),
+    socialProfiles: scorlySocialProfiles(data),
+    reviewPlatforms: ts ? ts.reviewPlatforms || [] : [],
     captured: !!bc,
   };
 
@@ -1325,6 +1631,7 @@ function scorlyComputeAiInsights(data, scoreResult) {
   if (ts && (ts.hasPhone || ts.hasEmail) && ts.hasAddress) add(strengths, 'Visible trust signals', 'Real-world contact details (phone/email and an address) are on the page.');
   if (businessContext.locality) add(strengths, 'Strong local positioning', `Location is explicit in structured data (${businessContext.locality}).`);
   if (ts && ts.hasReviewSignal) add(strengths, 'Social proof', 'Review or rating markup found.');
+  else if (ts && (ts.reviewPlatforms || []).length) add(strengths, 'Social proof', `Links to independent reviews on ${ts.reviewPlatforms.join(', ')}.`);
   if (content.readability >= 60) add(strengths, 'Easy to read', `Flesch reading ease ≈ ${content.readability}/100.`);
   if (content.wordCount >= 600) add(strengths, 'Substantial content', `${content.wordCount} words of copy for engines to work with.`);
   if (eeat.hasAuthorByline && eeat.hasPublishDate) add(strengths, 'Clear authorship', 'Author and publish date are both stated.');
@@ -1349,7 +1656,7 @@ function scorlyComputeAiInsights(data, scoreResult) {
     add(weaknesses, 'Generated-site faults', vibeNow.faults.map((f) => f.label).join('; ') + '.');
   }
   if (vibeNow && vibeNow.shellRatio != null && vibeNow.shellRatio >= 0.4) {
-    add(strengths, 'Content is in the served HTML', `${vibeNow.servedWords} of ${vibeNow.renderedWords} words are present before JavaScript runs, so non-executing crawlers can read the page.`);
+    add(strengths, 'Content is in the served HTML', `${scorlyServedWordsText(vibeNow.servedWords, vibeNow.renderedWords)} words are present before JavaScript runs, so non-executing crawlers can read the page.`);
   }
 
   // ---------- Content trust score ----------
@@ -1371,12 +1678,16 @@ function scorlyComputeAiInsights(data, scoreResult) {
   }
   if (!ai.hasFaqSchema) opportunities.push('Add an FAQ section with FAQPage schema — the questions people actually ask, each with a 2–3 sentence answer. This is the most direct route into AI answers and rich results.');
   if (content.wordCount > 0 && content.wordCount < 600) opportunities.push('Deepen the page copy: expand each service or topic into its own paragraph with specifics (materials, process, turnaround, pricing signals) rather than one-line claims.');
-  if (ts && !ts.hasReviewSignal) opportunities.push('Surface reviews or testimonials with Review/AggregateRating markup so ratings can appear in search results.');
+  if (ts && !ts.hasReviewSignal) {
+    opportunities.push((ts.reviewPlatforms || []).length || ts.hasTestimonials
+      ? `You already have reviews${(ts.reviewPlatforms || []).length ? ` on ${ts.reviewPlatforms.join(', ')}` : ''} — add AggregateRating (and Review) markup for the ones shown on this page so ratings can appear in search results.`
+      : 'Surface reviews or testimonials with Review/AggregateRating markup so ratings can appear in search results.');
+  }
   if (!eeat.hasAuthorByline) opportunities.push('Add a short author or team byline (with a person/company name) — AI systems weigh identifiable sources higher.');
   if (!(fr && fr.latestDate)) opportunities.push('Show a visible "last updated" date (with a <time datetime> tag or dateModified in schema) so both users and crawlers can see the content is current.');
   if (ts && !ts.hasTermsLink && !eeat.hasPrivacyLink) opportunities.push('Link privacy and terms pages in the footer — a baseline trust signal for users, search engines and AI alike.');
   if (data.llmsTxt === false) opportunities.push('Consider publishing an llms.txt at the site root — an emerging convention that hands AI systems a curated map of your best content.');
-  if (!eeat.hasOrgOrPersonSchema) opportunities.push('Add Organization schema (name, logo, address, sameAs social links) so engines can connect this page to a real entity.');
+  if (!entityNow && !scorlyFindEntitySchema(data.jsonLd).person) opportunities.push('Add Organization schema (name, logo, address, sameAs social links) so engines can connect this page to a real entity.');
   if ((data.jsonLdTypes || []).every((t) => !/BreadcrumbList/i.test(t)) && data.jsonLdTypes) opportunities.push('Add BreadcrumbList schema so results show your site structure instead of a bare URL.');
 
   const aiCopy = scorlyComputeAiCopy(data);

@@ -236,6 +236,7 @@ const SCORLY_CATEGORY_LABELS = {
   schema: 'Structured data',
   security: 'Security',
   mobile: 'Mobile',
+  a11y: 'Accessibility',
   aiSeo: 'AI Visibility',
   eeat: 'E-E-A-T',
 };
@@ -257,14 +258,19 @@ function scorlyBuildDiff(snapA, snapB, scoreA, scoreB) {
   // The Performance category is built from paint timings, so when one side
   // was captured in a background tab its score — and the overall score it
   // feeds — is not a like-for-like number.
-  const categories = Object.keys(SCORLY_CATEGORY_LABELS).map((key) => ({
-    key,
-    label: SCORLY_CATEGORY_LABELS[key],
-    a: scoreA.categoryScores[key],
-    b: scoreB.categoryScores[key],
-    delta: scoreB.categoryScores[key] - scoreA.categoryScores[key],
-    unreliable: key === 'perf' && !perfComparable,
-  }));
+  // A category one side has no score for (Accessibility, on a snapshot saved
+  // before it existed) has nothing to compare and is left out, rather than
+  // shown as a change from nothing.
+  const categories = Object.keys(SCORLY_CATEGORY_LABELS)
+    .filter((key) => scoreA.categoryScores[key] != null && scoreB.categoryScores[key] != null)
+    .map((key) => ({
+      key,
+      label: SCORLY_CATEGORY_LABELS[key],
+      a: scoreA.categoryScores[key],
+      b: scoreB.categoryScores[key],
+      delta: scoreB.categoryScores[key] - scoreA.categoryScores[key],
+      unreliable: key === 'perf' && !perfComparable,
+    }));
 
   const scores = {
     overall: {
@@ -472,6 +478,24 @@ function scorlyBuildDiff(snapA, snapB, scoreA, scoreB) {
       scorlyValueRow('HTTPS', a.security && a.security.https, b.security && b.security.https),
       scorlyValueRow('Secure context', a.security && a.security.isSecureContext, b.security && b.security.isSecureContext),
       scorlyNumRow('Mixed content', a.security && a.security.mixedContentCount, b.security && b.security.mixedContentCount, { betterWhen: 'lower' }),
+    ],
+  });
+
+  // Accessibility — captured only by newer analyses; an older side reads as
+  // "not captured" rather than as a change.
+  const axA = a.a11y || null;
+  const axB = b.a11y || null;
+  sections.push({
+    id: 'a11y',
+    label: 'Accessibility',
+    rows: [
+      scorlyNumRow('Contrast failures', axA && axA.contrast.failing, axB && axB.contrast.failing, { betterWhen: 'lower', note: 'sampled text below WCAG AA' }),
+      scorlyNumRow('Unlabelled form fields', axA && axA.forms.unlabelled, axB && axB.forms.unlabelled, { betterWhen: 'lower' }),
+      scorlyNumRow('Unnamed buttons', axA && axA.namelessButtons.count, axB && axB.namelessButtons.count, { betterWhen: 'lower' }),
+      scorlyValueRow('Skip link', axA ? (axA.skipLink || 'none') : null, axB ? (axB.skipLink || 'none') : null),
+      scorlyNumRow('Duplicate ids', axA && axA.duplicateIds.count, axB && axB.duplicateIds.count, { betterWhen: 'lower' }),
+      scorlyNumRow('Small, crowded tap targets', a.mobile && a.mobile.tapTargets && a.mobile.tapTargets.threshold ? a.mobile.tapTargets.small : null,
+        b.mobile && b.mobile.tapTargets && b.mobile.tapTargets.threshold ? b.mobile.tapTargets.small : null, { betterWhen: 'lower', note: 'WCAG 2.5.8, 24px' }),
     ],
   });
 

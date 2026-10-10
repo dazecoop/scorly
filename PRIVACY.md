@@ -36,8 +36,18 @@ another page later.
 Scorly makes network requests only to the site you are already looking at,
 and only to check things that are part of its public footprint:
 
-- `robots.txt` and `sitemap.xml`, fetched from the page's own origin
+- `robots.txt`, `sitemap.xml` and `llms.txt`, fetched from the page's own
+  origin
 - the page's favicon, to confirm it loads
+- the page's own URL, requested once more. A browser extension cannot read
+  response headers any other way, so this single response supplies both the
+  security-header checks and the HTML as it was served before any JavaScript
+  ran, which is what lets Scorly report what a non-executing crawler sees
+- a random, almost certainly non-existent URL on the same origin, to check
+  the site returns a real 404 rather than a soft 200
+- a handful of the page's own largest static assets, re-requested to read
+  their caching headers
+- the internal links on the page, to check they resolve
 
 The compare view can also load a URL **that you type into it**, in a
 background tab, so it can analyze that page the same way it analyzes the one
@@ -46,6 +56,22 @@ never loads a page you did not ask it to.
 
 No request is ever made to a Scorly-owned or third-party server. There is no
 telemetry, crash reporting, or usage tracking of any kind.
+
+## "AI" features do not use AI
+
+Scorly has an AI Insights tab, an AI Visibility score, an AI-copy detector
+and a vibe-code detector. None of them call a model, an API or a remote
+service of any kind, and none of them send your page anywhere.
+
+"AI" there refers to the audience, not the method. The AI Visibility score is
+about how readable your page is to AI answer engines. The AI-copy and
+vibe-code detectors are plain pattern matching — counting phrases, class
+names, HTML attributes and punctuation in the page already open in your
+browser — and every rule behind them is in
+[`popup/scoring.js`](popup/scoring.js) and
+[`popup/inpage-analyzer.js`](popup/inpage-analyzer.js) to read. Your page
+text is never uploaded, to Anthropic or OpenAI or anyone else, and no
+detector output is shared or retained beyond the popup you are looking at.
 
 ## Permissions
 

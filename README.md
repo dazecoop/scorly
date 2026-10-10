@@ -28,6 +28,10 @@ button and label on the page, diffed word by word, so a one-word edit to a
 Links and image alt text are matched by path, so the same link on localhost
 and live is never reported as a change.
 
+Scores, checks and findings are diffed too, including an **AI Copy & Vibe
+Code** section — so you can see a rewrite move the copy score, or catch a
+deploy that shipped a dev build.
+
 Fill either side from a snapshot you saved earlier or let Scorly load a URL
 in a background tab. Filter to just the differences, then export the whole
 comparison as PDF, CSV, JSON or Markdown — for a pull request, a client
@@ -43,15 +47,51 @@ press Save.
 
 **Scores the whole page, not just the title tag.** One overall score (0–100)
 broken into 8 categories — Technical, Content, Perf, Schema, Security,
-Mobile, AI SEO, E-E-A-T — each with its own bar, so you can see exactly which
-part of the page is dragging the score down.
+Mobile, AI Visibility, E-E-A-T — each with its own bar, so you can see
+exactly which part of the page is dragging the score down.
 
-**Explains every check.** 13 tabs of detail: Overview with a SERP preview,
-Meta, Content (readability, word/sentence stats, top keywords), H Tags,
-Links, Internal/External link lists, Images (alt-text audit), Schema (JSON-LD
-viewer), Tech, Perf (TTFB, requests, transfer size), Security, and Open Graph
-Preview. Every check is tagged pass / warn / fail with a severity, and rolled
-up into the Issues / Warnings / Passed counts on the Overview tab.
+**Explains every check.** 14 tabs of detail: Overview with a SERP preview,
+AI Insights, Meta, Content (readability, word/sentence stats, top keywords),
+H Tags, Links, Internal/External link lists, Images (alt-text audit), Schema
+(JSON-LD viewer), Tech, Perf (TTFB, requests, transfer size), Security, and
+Open Graph Preview. Every check is tagged pass / warn / fail with a severity,
+and rolled up into the Issues / Warnings / Passed counts on the Overview tab.
+
+**Tells you how visible the page is to AI answer engines.** The AI Insights
+tab breaks the AI Visibility score into the six things it is made of —
+crawler access, machine readability, trust signals, freshness, human-written
+copy and build quality — as one bar each. Click a bar to jump to the section
+that explains it. Every bar shows the same number as the section it opens,
+and all six read the same way round: higher is better.
+
+**Flags copy that reads as unedited AI output.** Fifteen families of surface
+tell, taken from Wikipedia's [Signs of AI
+writing](https://en.wikipedia.org/wiki/Wikipedia:Signs_of_AI_writing):
+em-dash density, curly quotes, over-represented AI vocabulary, stock phrase
+formulas ("stands as a testament", "in today's fast-paced"), false ranges
+("from X to Y"), rule-of-three cadence, negative parallelism, participle
+tails, copula avoidance, vague attribution, inline-header lists, emoji
+headings, Title Case headings, uniform sentence rhythm, and chatbot text left
+in the page. Each one names the passages it matched, so you can read the
+evidence rather than trust a number.
+
+That source is explicit that isolated tells prove nothing — one em dash is
+ordinary writing — so a page tripping fewer than three independent families
+is held below the "some patterns" band no matter how hard it trips them.
+
+**Spots a vibe-coded build, and separates it from what that costs.** Two
+different questions, answered separately. The *verdict* identifies the
+toolchain: builder fingerprints (Lovable, v0, Bolt, Replit), source-location
+attributes left in the markup, dev-server artifacts, the shadcn/Radix/Lucide
+kit, Tailwind by its own vocabulary, and the icon-library + utility-CSS +
+hydrating-React stack that every AI builder emits. A recognised CMS cancels
+it. The *score* is only about faults that actually cost visibility — chief
+among them a client-rendered shell, found by comparing the HTML as served
+against the DOM after JavaScript runs, which is the only way to see what a
+non-executing crawler gets.
+
+A generated site that server-renders and has real copy therefore scores
+100/100 here and is still named as generated. The toolchain is not the fault.
 
 **Shows you the share card before you post it.** The Open Graph tab renders
 the page exactly as it would appear when shared on Facebook, X, LinkedIn,
@@ -81,11 +121,32 @@ a bundled copy of jsPDF, no network call involved.
 subscription. Light/dark theme follows your OS by default, with a manual
 toggle.
 
-> **About "AI SEO" and "E-E-A-T"** — these two categories are heuristic
-> signals (structured data, semantic HTML landmarks, author byline, publish
-> date, about/contact/privacy links, and the like), not an official metric
-> from any search engine or AI provider. Treat them as directional
+> **About "AI Visibility" and "E-E-A-T"** — these two categories are
+> heuristic signals (structured data, semantic HTML landmarks, author byline,
+> publish date, about/contact/privacy links, and the like), not an official
+> metric from any search engine or AI provider. Treat them as directional
 > indicators, not ground truth.
+>
+> **About the AI-copy and vibe-code detectors** — these count surface
+> patterns and name the evidence. They cannot prove how a page was made, and
+> nothing here should be read as proof. Both are deliberately bounded: at
+> most 12 and 10 of the 100 AI Visibility points, 20 combined, so neither can
+> sink a page on its own, and AI Visibility is itself 7.5% of the overall
+> score — a full deduction moves it by 1.5.
+>
+> Two limits worth knowing. Good human writing can trip several copy tells at
+> once, which is why a cluster is required before anything is deducted. And a
+> production build strips most generated-site evidence (source attributes,
+> unbundled paths, dev modules), so on a well-made deployed site the stack is
+> all that remains detectable — and plenty of hand-built sites use the same
+> stack. The better the page, the less there is to find.
+>
+> They are placed under AI Visibility because Google's spam policies discount
+> mass-produced, low-added-value pages regardless of how they were made — its
+> [scaled content
+> abuse](https://developers.google.com/search/docs/essentials/spam-policies)
+> policy — and because AI answer engines cite sources that say something
+> specific. The deduction is about that, not about the tool.
 
 ---
 
@@ -114,8 +175,15 @@ toggle.
   (`chrome.scripting.executeScript`) only when you open the popup, so there's
   no background overhead and no always-on access to pages you're not
   inspecting.
-- `robots.txt` and `sitemap.xml` are checked with same-origin `fetch()` calls
-  made from the popup, to the site you're already looking at.
+- `robots.txt`, `sitemap.xml` and `llms.txt` are checked with same-origin
+  `fetch()` calls made from the popup, to the site you're already looking at.
+- **The page's own URL is requested once more**, because an extension cannot
+  see response headers any other way. That one response does double duty: its
+  headers give the security checks (HSTS, CSP, X-Frame-Options) and its body
+  is the HTML *as served*. The injected analyzer reads the DOM after
+  JavaScript has run, so comparing the two is the only way to tell what a
+  crawler that does not execute scripts actually receives — the
+  "crawlers see an empty shell" finding comes from that difference.
 - Performance stats come from the page's own `performance` Navigation/
   Resource Timing entries — nothing is re-fetched or re-loaded to measure
   them.
@@ -141,10 +209,13 @@ popup/
   theme.css            Design tokens (light + dark), shared with the compare view
   popup.css            Popup styling
   popup.js             Orchestration: analyze, wire up tabs/buttons
-  inpage-analyzer.js   Function injected into the page to extract all SEO/content/perf/security data
-  analyze.js           Shared capture step: run the analyzer in a tab, add robots/sitemap/favicon checks
+  inpage-analyzer.js   Function injected into the page to extract all SEO/content/perf/security data,
+                       including the AI-writing and generated-build signal counts
+  analyze.js           Shared capture step: run the analyzer in a tab, add robots/sitemap/favicon
+                       checks and read the page's served HTML + response headers
   snapshots.js         Local snapshot store (chrome.storage.local) for the compare view
-  scoring.js           Turns extracted data into 8 category scores + a severity-tagged checklist
+  scoring.js           Turns extracted data into 8 category scores + a severity-tagged checklist,
+                       plus the AI Visibility breakdown and the AI-copy / vibe-code detectors
   render.js            All DOM rendering for every tab
   export.js            JSON / CSV / PDF / Markdown generation
   vendor/jspdf.umd.min.js   Bundled jsPDF (MIT) — used for local, offline PDF export

@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Privacy Policy — Scorly</title>
+<meta name="description" content="Scorly does not collect or transmit any of your data. No account, no analytics, no tracking, and no remote server.">
+<link rel="icon" href="icon32.png" type="image/png">
+<link rel="canonical" href="https://dazecoop.github.io/scorly/privacy.html">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <a class="brand" href="./">
+    <img src="icon32.png" alt="" width="32" height="32">
+    <span>Scorly</span>
+  </a>
+</header>
+
+<main>
+<h1>Privacy Policy</h1>
+<p class="updated">Last updated 10 October 2026</p>
+
+<p class="lede">Scorly does not collect or transmit any of your data. There is no account,
+no analytics, no tracking, and no remote server — Scorly doesn't have one.
+The only thing it ever stores is a page snapshot you explicitly ask it to
+save for comparison, and that stays on your own machine.</p>
+
+<h2>What Scorly does</h2>
+<p>When you click the Scorly icon, it reads the page open in your active tab
+and runs its analysis there and then. The result is shown in the popup and
+discarded when you close it — closing the popup and reopening it runs the
+analysis again from scratch.</p>
+
+<h2>Snapshots and page comparison</h2>
+<p>The compare feature is the one part of Scorly that stores anything. When you
+press <strong>Save snapshot</strong>, or load a URL from the compare view, Scorly writes
+that page's analysis to <code>chrome.storage.local</code> so it can be diffed against
+another page later.</p>
+<ul>
+  <li>Snapshots are stored <strong>only in local extension storage on this machine</strong>.
+      They are never uploaded, never synced between devices, and no server ever
+      sees them.</li>
+  <li>A snapshot holds what the analysis found: the page URL, its meta tags, its
+      heading outline and visible text, its links and image alt text, its
+      structured data, and its measured timings.</li>
+  <li>Nothing is saved unless you ask for it. Simply opening the popup still
+      stores nothing.</li>
+  <li>Scorly keeps at most 8 snapshots and discards the oldest beyond that.</li>
+  <li>You can delete any snapshot, or all of them, from the compare view at any
+      time. Uninstalling the extension removes them too.</li>
+</ul>
+
+<h2>Network requests</h2>
+<p>Scorly makes network requests only to the site you are already looking at,
+and only to check things that are part of its public footprint:</p>
+<ul>
+  <li><code>robots.txt</code>, <code>sitemap.xml</code> and <code>llms.txt</code>, fetched from the page's own
+      origin</li>
+  <li>the page's favicon, to confirm it loads</li>
+  <li>the page's own URL, requested once more. A browser extension cannot read
+      response headers any other way, so this single response supplies both the
+      security-header checks and the HTML as it was served before any JavaScript
+      ran, which is what lets Scorly report what a non-executing crawler sees</li>
+  <li>a random, almost certainly non-existent URL on the same origin, to check
+      the site returns a real 404 rather than a soft 200</li>
+  <li>a handful of the page's own largest static assets, re-requested to read
+      their caching headers</li>
+  <li>the internal links on the page, to check they resolve</li>
+</ul>
+<p>The compare view can also load a URL <strong>that you type into it</strong>, in a
+background tab, so it can analyze that page the same way it analyzes the one
+in front of you. That tab is closed as soon as the analysis finishes. Scorly
+never loads a page you did not ask it to.</p>
+<p>No request is ever made to a Scorly-owned or third-party server. There is no
+telemetry, crash reporting, or usage tracking of any kind.</p>
+
+<h2>"AI" features do not use AI</h2>
+<p>Scorly has an AI Insights tab, an AI Visibility score, an AI-copy detector
+and a vibe-code detector. None of them call a model, an API or a remote
+service of any kind, and none of them send your page anywhere.</p>
+<p>"AI" there refers to the audience, not the method. The AI Visibility score is
+about how readable your page is to AI answer engines. The AI-copy and
+vibe-code detectors are plain pattern matching — counting phrases, class
+names, HTML attributes and punctuation in the page already open in your
+browser — and every rule behind them is in
+<a href="https://github.com/dazecoop/scorly/blob/main/popup/scoring.js"><code>popup/scoring.js</code></a> and
+<a href="https://github.com/dazecoop/scorly/blob/main/popup/inpage-analyzer.js"><code>popup/inpage-analyzer.js</code></a> to read. Your page
+text is never uploaded, to Anthropic or OpenAI or anyone else, and no
+detector output is shared or retained beyond the popup you are looking at.</p>
+
+<h2>Permissions</h2>
+<ul>
+  <li><strong>activeTab / scripting</strong> — used to read and analyze the tab you have open
+      when you click the icon, and the background tab the compare view opens for
+      a URL you typed. Scorly never runs on a schedule and never reads a page you
+      did not point it at.</li>
+  <li><strong>tabs</strong> — used to identify which tab is active, so the popup knows what
+      to analyze, and to open and close the background tab when you ask the
+      compare view to load a specific URL.</li>
+  <li><strong>storage</strong> — used only to hold the comparison snapshots you explicitly
+      save, in local (not synced) extension storage.</li>
+  <li><strong>host permissions (<code>&lt;all_urls&gt;</code>)</strong> — needed because Scorly can analyze
+      any site you're on, including <code>localhost</code> and private-network addresses.
+      It is never used to read or modify pages you aren't actively inspecting.</li>
+</ul>
+
+<h2>Exports</h2>
+<p>The PDF, CSV, JSON and Markdown exports — both the popup's footer buttons
+and the compare view's Export menu — generate files locally in your browser
+(PDF via a bundled, offline copy of jsPDF) and save them to your device
+through the browser's normal download flow. Scorly never uploads them
+anywhere.</p>
+
+<h2>Changes</h2>
+<p>If this policy ever changes, the change will be reflected on this page and in
+<a href="https://github.com/dazecoop/scorly/blob/main/PRIVACY.md"><code>PRIVACY.md</code></a>
+in the same repository, and the version history is public.</p>
+
+<h2>Contact</h2>
+<p>Questions about this policy can be opened as an issue on the
+<a href="https://github.com/dazecoop/scorly">Scorly repository</a>.</p>
+</main>
+
+<footer>
+  <a href="./">Scorly</a> · free and open source, MIT licensed ·
+  <a href="https://github.com/dazecoop/scorly">source on GitHub</a>
+</footer>
+
+</div>
+</body>
+</html>

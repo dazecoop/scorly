@@ -898,6 +898,50 @@ async function scorlyInPageAnalyze() {
       flag('AI coding assistant', 'generator meta tag names an LLM: "' + generator.slice(0, 60) + '"');
     }
 
+    // --- Source-location attributes left in the served markup ---
+    // AI builders and dev inspectors tag every element with the file and line
+    // it came from, so the editor can map a click in the preview back to the
+    // source. None of it is meant to ship. It is the single most reliable
+    // fingerprint available: no hand-written page has it, and each tagger's
+    // attribute names identify the tool outright.
+    const SOURCE_ATTRS = [
+      ['data-lov-id', 'Lovable'], ['data-lov-name', 'Lovable'],
+      ['data-component-path', 'Lovable'], ['data-component-name', 'Lovable'],
+      ['data-component-file', 'Lovable'], ['data-component-line', 'Lovable'],
+      ['data-tsd-source', 'TanStack Start (dev)'],
+      ['data-inspector-line', 'react-dev-inspector'], ['data-inspector-relative-path', 'react-dev-inspector'],
+      ['data-v0-t', 'Vercel v0'],
+      ['data-sentry-component', 'Sentry'], ['data-sentry-source-file', 'Sentry'],
+      ['data-locatorjs-id', 'LocatorJS'], ['data-dyn-source', 'AI builder'],
+    ];
+    const sourceAttrs = (() => {
+      let total = 0;
+      const tools = [];
+      SOURCE_ATTRS.forEach(([attr, tool]) => {
+        const n = document.querySelectorAll('[' + attr + ']').length;
+        if (!n) return;
+        total += n;
+        if (!tools.includes(tool)) tools.push(tool);
+      });
+      return { total, tools };
+    })();
+
+    // --- Served by a dev server rather than a production build ---
+    // Unbundled /src/ asset paths, Vite's client and filesystem routes. A
+    // real build emits hashed, minified files from /assets/ or /_next/. This
+    // is expected on localhost and only a fault once it is public.
+    const devServer = (() => {
+      const refs = Array.from(document.querySelectorAll('[src], [href]'))
+        .map((n) => n.getAttribute('src') || n.getAttribute('href') || '');
+      const unbundled = refs.filter((u) => /^(?:\/|\.\/)?src\//.test(u) || /\/src\/(?:assets|styles|components|routes)\//.test(u)).length;
+      return {
+        unbundled,
+        viteClient: /\/@vite\/client|\/@react-refresh/.test(html),
+        fsPaths: (html.match(/\/@fs\/|\/@id\//g) || []).length,
+        devStyles: /-dev-styles|data-tanstack-router-dev|\/@tanstack-start\//.test(html),
+      };
+    })();
+
     // --- Stack / UI-kit markers (the default vibe-code toolchain) ---
     const radixEls = document.querySelectorAll('[data-radix-collection-item], [data-radix-scroll-area-viewport], [data-radix-popper-content-wrapper], [data-state][data-orientation], [data-slot]').length;
     const lucideIcons = document.querySelectorAll('svg.lucide, svg[class*="lucide-"]').length;
@@ -925,6 +969,63 @@ async function scorlyInPageAnalyze() {
     const avgClassesPerEl = classedEls ? Math.round((classTotal / classedEls) * 10) / 10 : 0;
     const heavyClassPct = classedEls ? Math.round((heavyClassEls / classedEls) * 100) : 0;
     const tailwindCdn = /cdn\.tailwindcss\.com/.test(html);
+
+    // Density alone misses a Tailwind build with a custom theme, where class
+    // names stay short ("bg-brand-ink text-brand-paper"). These two patterns
+    // identify Tailwind by its vocabulary instead: its distinctive utility
+    // names, and its variant prefixes, which no other CSS convention uses.
+    const allClasses = Array.from(document.querySelectorAll('[class]'))
+      .map((n) => (typeof n.className === 'string' ? n.className : '')).join(' ');
+    const TW_UTILITIES = /\b(?:flex|grid|hidden|block|inline-flex|items-(?:center|start|end)|justify-(?:center|between|around|end)|gap-\d|space-[xy]-\d|[pm][txblrye]?-\d{1,2}|min-[wh]-|max-[wh]-|text-(?:xs|sm|base|lg|xl|\dxl)|font-(?:thin|light|normal|medium|semibold|bold|extrabold)|rounded(?:-(?:sm|md|lg|xl|full))?|shadow(?:-(?:sm|md|lg|xl))?|border-[trbl]?\d?|opacity-\d|z-\d|sr-only|truncate|uppercase|tracking-(?:tight|wide|wider)|leading-(?:none|tight|snug|relaxed)|transition(?:-[a-z]+)?|overflow-(?:hidden|auto|scroll))\b/g;
+    const tailwindUtilityHits = (allClasses.match(TW_UTILITIES) || []).length;
+    const tailwindPrefixed = (allClasses.match(/\b(?:sm|md|lg|xl|2xl|hover|focus|focus-visible|active|disabled|group-hover|dark|first|last|odd|even):[a-z[-]/g) || []).length;
+
+    // --- Signals that survive a production build ---
+    // Everything above (source attributes, /src/ paths, Vite's client) is
+    // stripped by a real build, so on a deployed site none of it fires. What
+    // is left is the stack itself: an icon library, utility CSS and a
+    // hydrating JS framework. That trio is the default output of every
+    // current AI builder, which is weak evidence individually and worth
+    // something together.
+    const iconLibrary = (() => {
+      const sets = [
+        ['Lucide', 'svg.lucide, svg[class*="lucide-"]'],
+        ['Heroicons', 'svg[class*="heroicon"]'],
+        ['Feather', 'svg.feather, svg[class*="feather-"]'],
+        ['Phosphor', 'svg[class*="ph-"]'],
+        ['Tabler', 'svg[class*="tabler-icon"]'],
+      ];
+      for (let i = 0; i < sets.length; i++) {
+        const n = document.querySelectorAll(sets[i][1]).length;
+        if (n) return { name: sets[i][0], count: n };
+      }
+      return null;
+    })();
+
+    // React's SSR output marks text boundaries with empty comments and
+    // Suspense boundaries with <!--$-->; these identify a hydrating React
+    // render even after minification.
+    const reactSsr = (html.match(/<!-- -->|<!--\$-->|<!--\/\$-->/g) || []).length;
+    // A production bundle: content-hashed files under /assets/ or /_next/.
+    const hashedBundle = /\/(?:assets|_next\/static)\/[^"']*[-.][a-z0-9]{8,}\.(?:js|css)/i.test(html);
+
+    // A recognised CMS or site-builder explains the stack without any AI
+    // involvement, so finding one argues against the whole hypothesis.
+    const cmsFingerprint = (() => {
+      const tests = [
+        [/wp-content|wp-includes|wp-json/i, 'WordPress'],
+        [/webflow/i, 'Webflow'],
+        [/squarespace|static1\.squarespace/i, 'Squarespace'],
+        [/wix\.com|wixstatic/i, 'Wix'],
+        [/cdn\.shopify|shopify\.com/i, 'Shopify'],
+        [/drupal/i, 'Drupal'],
+        [/joomla/i, 'Joomla'],
+        [/hubspot|hs-scripts/i, 'HubSpot'],
+        [/ghost(?:-sdk|\.io)/i, 'Ghost'],
+      ];
+      for (let i = 0; i < tests.length; i++) if (tests[i][0].test(html)) return tests[i][1];
+      return null;
+    })();
 
     // --- Generated-template design clichés ---
     const countClass = (frag) => document.querySelectorAll('[class*="' + frag + '"]').length;
@@ -986,7 +1087,13 @@ async function scorlyInPageAnalyze() {
       framework,
       clientRendered: !!(isViteSpa || (!isNext && framework === null && document.querySelector('#root, #app') && domSize < 2000 && scriptSrcs.length > 0 && paragraphCount <= 2)),
       ui: { radixEls, lucideIcons, shadcnVars, tailwindCdn },
-      tailwind: { classedEls, avgClassesPerEl, heavyClassEls, heavyClassPct, arbitraryValues },
+      tailwind: { classedEls, avgClassesPerEl, heavyClassEls, heavyClassPct, arbitraryValues, utilityHits: tailwindUtilityHits, prefixed: tailwindPrefixed },
+      sourceAttrs,
+      devServer,
+      iconLibrary,
+      reactSsr,
+      hashedBundle,
+      cmsFingerprint,
       designCliches,
       labelComments,
       jsxComments,

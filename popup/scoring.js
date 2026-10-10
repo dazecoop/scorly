@@ -854,21 +854,73 @@ function scorlyComputeVibeCode(data) {
   const add = (label, points, detail) => { if (points > 0) signals.push({ label, points, detail }); };
 
   // --- Confidence: was this generated? ---
-  (v.builders || []).forEach((b, i) => {
+  // The analyzer's own fingerprints, plus any this function infers from
+  // evidence the analyzer only counted (Lovable's source-attribute tagger).
+  // Copied rather than mutated so re-running on the same snapshot cannot
+  // accumulate duplicates.
+  const builders = (v.builders || []).slice();
+  const flagBuilder = (name, evidence) => {
+    if (!builders.some((b) => b.name === name)) builders.push({ name, evidence });
+  };
+  builders.forEach((b, i) => {
     add(`Builder fingerprint: ${b.name}`, i === 0 ? 40 : 10, b.evidence);
   });
-  if (served && served.generator && !(v.builders || []).length) {
+  if (served && served.generator && !builders.length) {
     add('Generator meta tag', 12, `Served HTML declares generator "${served.generator}".`);
   }
+  // Source-location attributes are the strongest fingerprint there is: a
+  // builder tagging every element with its source file so its preview can map
+  // clicks back to code. Lovable's tagger names itself outright.
+  const sa = v.sourceAttrs;
+  if (sa && sa.total) {
+    const lovable = sa.tools.indexOf('Lovable') >= 0;
+    if (lovable) flagBuilder('Lovable', 'data-lov-id / data-component-path attributes on the markup');
+    add('Source-location attributes in the HTML', lovable ? 40 : 30,
+      `${sa.total} element(s) tagged with the source file they came from (${sa.tools.join(', ')}). Nothing hand-written carries these, and they are not meant to ship.`);
+  }
+
+  // A dev server rather than a production build. Expected on localhost, so
+  // only evidence of the toolchain there; the fault is added separately.
+  const ds = v.devServer;
+  if (ds) {
+    const devBits = [
+      ds.unbundled ? `${ds.unbundled} unbundled /src/ asset path(s)` : null,
+      ds.viteClient ? "Vite's dev client" : null,
+      ds.fsPaths ? `${ds.fsPaths} /@fs/ or /@id/ module path(s)` : null,
+      ds.devStyles ? 'dev-only stylesheet markers' : null,
+    ].filter(Boolean);
+    add('Served by a dev server, not a production build', devBits.length ? (devBits.length >= 2 ? 20 : 12) : 0,
+      `${devBits.join(', ')}. A real build emits hashed, minified files.`);
+  }
+
   const ui = v.ui || {};
   const kitParts = [ui.radixEls > 0 && 'Radix primitives', ui.lucideIcons > 0 && 'Lucide icons', ui.shadcnVars && 'shadcn/ui CSS variables'].filter(Boolean);
-  add('Default AI-builder UI kit', kitParts.length >= 3 ? 18 : kitParts.length === 2 ? 10 : 0,
-    `${kitParts.join(', ')} — the stack every current AI app-builder emits by default.`);
+  add('shadcn/ui component kit', kitParts.length >= 3 ? 18 : kitParts.length === 2 ? 10 : 0,
+    `${kitParts.join(', ')} — the component kit every current AI app-builder reaches for.`);
   if (ui.tailwindCdn) add('Tailwind CDN build', 8, 'Tailwind is loaded from its CDN, which its own docs say is for prototyping only.');
 
   const tw = v.tailwind || {};
   add('Tailwind utility soup', (tw.heavyClassPct >= 25 && tw.avgClassesPerEl >= 6) ? 12 : (tw.heavyClassPct >= 12 ? 6 : 0),
     `${tw.heavyClassPct}% of classed elements carry 10+ utility classes (average ${tw.avgClassesPerEl}).`);
+
+  // The stack that survives a production build. Each part is ordinary on its
+  // own — plenty of hand-built sites use Tailwind, or Lucide, or React — so
+  // this is scored as a composite and only once, and a recognised CMS cancels
+  // it outright. It is what remains detectable when the output is good: the
+  // better the page, the less there is to find, and that limit is real.
+  const usesTailwind = (tw.utilityHits || 0) >= 25 || (tw.prefixed || 0) >= 10 || ui.tailwindCdn;
+  const stackParts = [
+    v.iconLibrary ? `${v.iconLibrary.name} icons (${v.iconLibrary.count})` : null,
+    usesTailwind ? `Tailwind utility CSS (${tw.prefixed || 0} variant-prefixed classes)` : null,
+    v.reactSsr ? 'a hydrating React render' : (v.framework || null),
+    v.hashedBundle ? 'a hashed asset bundle' : null,
+  ].filter(Boolean);
+  if (v.cmsFingerprint) {
+    add(`Built on ${v.cmsFingerprint}`, 0, 'A recognised CMS explains the markup without any AI involvement.');
+  } else if (stackParts.length >= 3) {
+    add('The default AI-builder stack', stackParts.length >= 4 ? 30 : 22,
+      `${stackParts.join(', ')}. This combination is what every AI app-builder emits, though hand-built sites use it too — weak on its own, which is why it is counted once.`);
+  }
 
   add('AI-labelled section comments', tier0(v.labelComments, [[3, 10], [1, 5]]),
     `${v.labelComments} Title Case section comment(s) ("<!-- Hero Section -->") of the kind a model emits to label its own output.`);
@@ -921,17 +973,37 @@ function scorlyComputeVibeCode(data) {
     fault('No semantic landmarks', 1, 'Everything is <div>s, so nothing marks out the main content.');
   }
 
+  // Shipping a dev build is a real cost — unminified, unhashed, uncacheable
+  // assets and source paths in the markup — but on localhost it is simply
+  // what a dev server does, so it is noted there rather than charged for.
+  const devSignals = v.devServer || {};
+  const isDevBuild = !!(devSignals.viteClient || devSignals.fsPaths || devSignals.devStyles ||
+    (devSignals.unbundled || 0) >= 3);
+  if (isDevBuild && !data.isLocalhost) {
+    fault('Deployed as a dev build', 3,
+      'The markup references unbundled source paths and dev-only modules, so assets are unminified and cannot be cached. Run a production build before deploying.');
+  }
+  if ((v.sourceAttrs || {}).total >= 50 && !data.isLocalhost) {
+    fault('Source paths leaked into the HTML', 2,
+      `${v.sourceAttrs.total} elements carry the file and line they were generated from. It bloats every page and publishes your source tree layout.`);
+  }
+
   const confidence = Math.min(100, signals.reduce((s, x) => s + x.points, 0));
   const band = confidence >= 76 ? 'Almost certainly AI-generated'
     : confidence >= 51 ? 'Probably AI-generated'
       : confidence >= 26 ? 'Mixed signals'
         : 'No real signs of AI generation';
 
-  let penalty = faults.reduce((s, f) => s + f.points, 0);
   // Small confidence component so a page that is plainly generated boilerplate
-  // carries some cost even when each individual fault is mild.
-  if (confidence >= 60) penalty += 2;
-  penalty = Math.min(10, penalty);
+  // carries some cost even when each individual fault is mild. Added as a
+  // listed fault rather than straight onto the total, so that every point of
+  // the deduction has a row explaining it — a score of 80 next to "no
+  // faults found" is exactly the contradiction this panel is meant to avoid.
+  if (confidence >= 60) {
+    fault('Generated boilerplate', 2,
+      `The markup scores ${confidence}/100 on generated-site fingerprints. Google's scaled-content-abuse policy is aimed at pages mass-produced this way, so a small deduction applies even where nothing else here is wrong.`);
+  }
+  let penalty = Math.min(10, faults.reduce((sum, f) => sum + f.points, 0));
 
   // Two different things, deliberately reported differently. `buildScore` is
   // an app-convention score (high = good) for the faults, because that is
@@ -947,7 +1019,7 @@ function scorlyComputeVibeCode(data) {
     score: confidence,
     buildScore,
     band,
-    builders: v.builders || [],
+    builders,
     framework: v.framework || null,
     platform: served ? served.platform : null,
     servedWords: served ? served.words : null,

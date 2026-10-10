@@ -769,11 +769,15 @@ function renderInsightsTab(data, scoreResult, insights) {
     </div>`;
 
     if (vc.servedWords != null) {
-      const pct = vc.renderedWords ? Math.round((vc.servedWords / vc.renderedWords) * 100) : 0;
+      // Capped at 100: the served HTML is counted by stripping tags, the
+      // rendered figure comes from innerText, and the two tokenise slightly
+      // differently, so a fully server-rendered page can land a little over
+      // 1.0. "102% of the copy is crawlable" is not a thing.
+      const pct = vc.renderedWords ? Math.min(100, Math.round((vc.servedWords / vc.renderedWords) * 100)) : 0;
       html += `<div class="sig-row">
         <div class="sig-head"><span class="sig-label">What a non-JavaScript crawler sees</span>
         <span class="sig-weight" style="background:${scoreColor(pct)}">${pct}%</span></div>
-        <div class="sig-detail">${vc.servedWords} of ${vc.renderedWords} words are present in the HTML as served, before any JavaScript runs.</div>
+        <div class="sig-detail">${vc.servedWords >= vc.renderedWords ? `All ${vc.renderedWords}` : `${vc.servedWords} of ${vc.renderedWords}`} words are present in the HTML as served, before any JavaScript runs.</div>
         <div class="bar-track"><div class="bar-fill" style="width:${Math.min(100, pct)}%;background:${scoreColor(pct)}"></div></div>
       </div>`;
     }

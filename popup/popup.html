@@ -32,6 +32,7 @@
       <div class="sk sk-btn"></div>
     </div>
     <div class="sk sk-tabs"></div>
+    <div class="sk sk-hero"></div>
     <!-- Real score components in waiting state: the ring ticks around like a
          progress spinner, the category bars shimmer until scores exist. -->
     <div class="score-row">
@@ -143,6 +144,12 @@
     <div class="tab-scroll">
 
     <section id="tab-overview" class="tab-pane active">
+      <!-- What the tab looked like when it was analyzed. Captured locally by
+           the browser and held in popup memory only (see captureHero). -->
+      <div class="hero" id="hero" data-state="loading" aria-hidden="true">
+        <img class="hero-img" id="heroImg" alt="" />
+        <div class="hero-fade"></div>
+      </div>
       <div class="score-row">
         <div class="score-circle-wrap">
           <svg viewBox="0 0 120 120" class="score-circle">

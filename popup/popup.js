@@ -92,6 +92,64 @@ function lockInScore() {
   setTimeout(() => svg.classList.remove('score-fast-spin'), 650);
 }
 
+// ---- Page screenshot (overview hero) ----
+// tabs.captureVisibleTab is a local browser API: the pixels go straight from
+// the browser into this popup. The image lives in memory for this popup
+// session only — it is never put on lastData, so it never reaches saved
+// snapshots or exports (and their storage quota).
+let heroGen = 0;
+
+function setHeroState(state, src) {
+  const hero = el('hero');
+  const img = el('heroImg');
+  if (state === 'ready') {
+    // Flip to ready only once the image has decoded, so the shimmer hands
+    // straight over to the fade-in instead of flashing an empty box.
+    img.onload = () => { hero.dataset.state = 'ready'; };
+    img.onerror = () => { hero.dataset.state = 'none'; };
+    img.src = src;
+  } else {
+    hero.dataset.state = state;
+  }
+}
+
+// A retina viewport can be ~3000px wide; the banner is 500px. Keep 2x for
+// sharpness and drop the rest so the popup isn't holding a huge bitmap.
+function downscaleImage(dataUrl, maxWidth) {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => {
+      if (img.naturalWidth <= maxWidth) { resolve(dataUrl); return; }
+      const canvas = document.createElement('canvas');
+      canvas.width = maxWidth;
+      canvas.height = Math.round(img.naturalHeight * (maxWidth / img.naturalWidth));
+      const ctx = canvas.getContext('2d');
+      ctx.imageSmoothingQuality = 'high';
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+      resolve(canvas.toDataURL('image/jpeg', 0.85));
+    };
+    img.onerror = () => resolve(dataUrl);
+    img.src = dataUrl;
+  });
+}
+
+async function captureHero(tab) {
+  const gen = ++heroGen;
+  const hadImage = el('hero').dataset.state === 'ready';
+  if (!hadImage) setHeroState('loading');
+  try {
+    const raw = await browserApi.tabs.captureVisibleTab(tab.windowId, { format: 'jpeg', quality: 85 });
+    const src = await downscaleImage(raw, 1000);
+    if (gen !== heroGen) return; // a newer analysis started meanwhile
+    setHeroState('ready', src);
+  } catch (err) {
+    if (gen !== heroGen) return;
+    // Chrome rate-limits captures (~2/s), so a fast re-analyze can fail —
+    // keep the previous shot of the same tab rather than dropping it.
+    if (!hadImage) setHeroState('none');
+  }
+}
+
 async function analyzeActiveTab() {
   showLoading();
   progressStart();
@@ -102,6 +160,10 @@ async function analyzeActiveTab() {
       showError("This page can't be analyzed (browser-internal or store page).");
       return;
     }
+
+    // Not awaited: the capture runs alongside the analysis and the banner
+    // shimmers until it lands.
+    captureHero(tab);
 
     // Two-phase render: paint everything the in-page analyzer returned the
     // moment it lands, while the origin checks (robots.txt, sitemap, favicon,

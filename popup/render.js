@@ -195,6 +195,9 @@ function renderOverview(data, scoreResult, opts) {
   const stats = [
     ['Word count', data.content.wordCount.toLocaleString()],
     ['Page size', formatBytes(data.htmlSize)],
+    ...(data.textSize != null && data.htmlSize
+      ? [['Text-to-code', `${Math.round((data.textSize / data.htmlSize) * 1000) / 10}%`]]
+      : []),
     ['Images', `${data.images.total} (${data.images.missingAlt} missing alt)`],
     ['Links', `${data.links.internal} internal / ${data.links.external} external`],
     ['Headings', `H1:${data.headings.counts.h1} H2:${data.headings.counts.h2} H3:${data.headings.counts.h3}`],

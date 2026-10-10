@@ -1116,6 +1116,10 @@ async function scorlyInPageAnalyze() {
 
   let htmlSize = 0;
   try { htmlSize = new Blob([document.documentElement.outerHTML]).size; } catch (e) { htmlSize = document.documentElement.outerHTML.length; }
+  // Visible-text bytes, measured the same way as htmlSize so the two divide
+  // cleanly into a text-to-code ratio.
+  let textSize = 0;
+  try { textSize = new Blob([bodyText]).size; } catch (e) { textSize = bodyText.length; }
 
   const firstParagraph = (() => {
     const p = document.querySelector('p');
@@ -1163,6 +1167,7 @@ async function scorlyInPageAnalyze() {
     },
     wordCount,
     htmlSize,
+    textSize,
     og,
     twitter,
     jsonLd,

@@ -237,6 +237,31 @@ function scorlyComputeScore(data) {
     content.add('duptext', 'On-page text duplication', 'pass', 'No duplicated paragraph text found.');
   }
 
+  // Text-to-code ratio. A legacy proxy metric (every classic audit tool
+  // reports it), so it is here for parity — but it is deliberately never a
+  // hard fail: a React page with 800 words of real copy can sit at 5% and be
+  // perfectly fine. Only present on captures made since textSize landed.
+  if (data.textSize != null && data.htmlSize) {
+    const ratio = Math.round((data.textSize / data.htmlSize) * 1000) / 10;
+    const words = (data.content && data.content.wordCount) || 0;
+    const sizes = `${data.textSize.toLocaleString()} bytes of visible text in ${data.htmlSize.toLocaleString()} bytes of HTML`;
+    if (ratio >= 8) {
+      content.add('textratio', 'Text-to-code ratio', 'pass', `${ratio}% — ${sizes}.`);
+    } else if (words >= 300) {
+      // Enough copy to rule out a thin page, so the ratio is a markup/inline-
+      // script weight problem, not a content problem. Worth saying out loud,
+      // because the usual advice ("add more content") would be wrong here.
+      content.add('textratio', 'Text-to-code ratio', 'pass',
+        `${ratio}% — ${sizes}. Low, but the page has ${words.toLocaleString()} words, so this is markup and inline script weight rather than thin content. Trimming it helps page speed; it is not an SEO problem on its own.`, 'low');
+    } else if (ratio >= 3) {
+      content.add('textratio', 'Text-to-code ratio', 'warn',
+        `${ratio}% — ${sizes}, and only ${words.toLocaleString()} words of copy. The ratio itself is a weak signal, but a page this light on text usually is too.`, 'low');
+    } else {
+      content.add('textratio', 'Text-to-code ratio', 'warn',
+        `${ratio}% — ${sizes}, and only ${words.toLocaleString()} words of copy. Either the content is thin or it is rendered client-side and crawlers may not see it.`, 'med');
+    }
+  }
+
   // ===================== TECHNICAL =====================
   const technical = makeCategory();
   technical.add('https', 'HTTPS', (data.isLocalhost || data.security.https) ? 'pass' : 'fail',
@@ -304,6 +329,34 @@ function scorlyComputeScore(data) {
       technical.add('wwwredirect', 'www / non-www redirect', 'fail', `${wr.altHost} serves content without redirecting to ${data.hostname} — this can cause duplicate-content issues.`, 'high');
     } else {
       technical.add('wwwredirect', 'www / non-www redirect', 'pass', `${wr.altHost} redirects to ${data.hostname}.`);
+    }
+  }
+
+  // hreflang. Absence is not a fault on a single-language site, so the
+  // no-tags case passes with an explanation rather than flagging a red issue
+  // on a one-language plastering firm.
+  if (data.hreflangs) {
+    const hl = data.hreflangs;
+    if (!hl.length) {
+      technical.add('hreflang', 'hreflang tags', 'pass',
+        `No hreflang tags — correct for a single-language site${data.lang ? ' (this page declares lang="' + data.lang + '")' : ''}. Only needed if you publish language or region variants of this page.`, 'low');
+    } else {
+      const codes = hl.map((h) => (h.lang || '').trim()).filter(Boolean);
+      const bad = codes.filter((c) => !/^(x-default|[a-z]{2,3}(-[A-Za-z]{2,4})?(-[A-Za-z]{2})?)$/i.test(c));
+      const hasXDefault = codes.some((c) => /^x-default$/i.test(c));
+      const canonicalHref = (data.canonical || data.url || '').split('#')[0];
+      const selfReferenced = hl.some((h) => (h.href || '').split('#')[0] === canonicalHref);
+      const problems = [];
+      if (bad.length) problems.push(`invalid language code(s): ${bad.join(', ')}`);
+      if (!selfReferenced) problems.push('no entry points back at this page (each version must list itself)');
+      if (!hasXDefault) problems.push('no x-default entry for users outside the listed locales');
+      if (problems.length) {
+        technical.add('hreflang', 'hreflang tags', 'warn',
+          `${hl.length} hreflang tag(s) (${codes.join(', ')}), but ${problems.join('; ')}.`, bad.length || !selfReferenced ? 'med' : 'low');
+      } else {
+        technical.add('hreflang', 'hreflang tags', 'pass',
+          `${hl.length} hreflang tag(s) (${codes.join(', ')}), self-referencing and with an x-default.`);
+      }
     }
   }
 
@@ -620,6 +673,31 @@ function scorlyComputeScore(data) {
   eeat.add('privacy', 'Privacy policy linked', data.eeat.hasPrivacyLink ? 'pass' : 'warn',
     data.eeat.hasPrivacyLink ? `Found a link to a Privacy Policy${matchNote(data.eeat.privacyMatch)}.`
       : 'No link on this page matches "privacy" or "data protection" (checked in link URLs and anchor text).', 'low');
+  // Linked social profiles. One check for the lot, deliberately: whether a
+  // business should be on YouTube or X is a marketing decision, not an SEO
+  // fault, so a missing network is never its own red flag. What search
+  // engines actually use is the entity link (sameAs / a profile link that
+  // corroborates the business exists).
+  if (data.trustSignals && data.trustSignals.socialProfiles) {
+    const NAMES = {
+      'facebook.com': 'Facebook', 'instagram.com': 'Instagram', 'linkedin.com': 'LinkedIn',
+      'x.com': 'X', 'twitter.com': 'X/Twitter', 'youtube.com': 'YouTube',
+      'tiktok.com': 'TikTok',
+    };
+    const profiles = data.trustSignals.socialProfiles;
+    const names = profiles.map((h) => NAMES[h] || (/^pinterest\./.test(h) ? 'Pinterest' : h));
+    const sameAs = (data.businessContext && data.businessContext.sameAsCount) || 0;
+    if (!profiles.length) {
+      eeat.add('social', 'Linked social profiles', 'warn',
+        'No links to social profiles found on this page. One or two profiles that genuinely get used corroborate that the business is real — more accounts is not better, and an abandoned profile is worse than none.', 'low');
+    } else if (!sameAs) {
+      eeat.add('social', 'Linked social profiles', 'pass',
+        `${profiles.length} profile link(s): ${names.join(', ')}. Listing the same URLs under "sameAs" in your Organization schema would tie them to the business as an entity.`, 'low');
+    } else {
+      eeat.add('social', 'Linked social profiles', 'pass',
+        `${profiles.length} profile link(s): ${names.join(', ')}, with ${sameAs} sameAs entr${sameAs === 1 ? 'y' : 'ies'} in the schema.`);
+    }
+  }
   eeat.add('https', 'Trust signal: HTTPS', (data.isLocalhost || data.security.https) ? 'pass' : 'fail',
     data.isLocalhost ? 'Localhost — skipped.' : (data.security.https ? 'Secure connection.' : 'Not served over HTTPS.'), 'high');
 

@@ -82,16 +82,59 @@ async function scorlySaveSnapshot(data, { label, origin } = {}) {
     next = next.slice(0, Math.max(2, Math.floor(next.length / 2)));
     await scorlyWriteSnapshots(next);
   }
+  await scorlyPruneShots(next);
   return snapshot;
 }
 
 async function scorlyDeleteSnapshot(id) {
   const list = await scorlyLoadSnapshots();
-  await scorlyWriteSnapshots(list.filter((s) => s.id !== id));
+  const next = list.filter((s) => s.id !== id);
+  await scorlyWriteSnapshots(next);
+  await scorlyPruneShots(next);
 }
 
 async function scorlyClearSnapshots() {
-  await scorlyStorage.remove(SCORLY_SNAP_KEY);
+  await scorlyStorage.remove([SCORLY_SNAP_KEY, SCORLY_SHOT_KEY]);
+}
+
+// ---------------------------------------------------------------------------
+// Report screenshots
+// ---------------------------------------------------------------------------
+// The popup's page screenshot, kept for the full-report view. Stored apart
+// from the snapshot itself so the diff/export data never carries it, keyed by
+// snapshot id, and capped hard because a JPEG is ~10× a snapshot's weight.
+
+const SCORLY_SHOT_KEY = 'scorly-shots';
+const SCORLY_SHOT_LIMIT = 3;
+
+async function scorlyLoadShots() {
+  const stored = await scorlyStorage.get(SCORLY_SHOT_KEY);
+  const shots = stored && stored[SCORLY_SHOT_KEY];
+  return Array.isArray(shots) ? shots : [];
+}
+
+async function scorlySaveShot(snapshotId, dataUrl) {
+  const shots = (await scorlyLoadShots()).filter((s) => s.id !== snapshotId);
+  const next = [{ id: snapshotId, dataUrl }].concat(shots).slice(0, SCORLY_SHOT_LIMIT);
+  try {
+    await scorlyStorage.set({ [SCORLY_SHOT_KEY]: next });
+  } catch (err) {
+    // Over quota: the report still works without its banner.
+    await scorlyStorage.set({ [SCORLY_SHOT_KEY]: next.slice(0, 1) }).catch(() => {});
+  }
+}
+
+async function scorlyGetShot(snapshotId) {
+  const shot = (await scorlyLoadShots()).find((s) => s.id === snapshotId);
+  return shot ? shot.dataUrl : null;
+}
+
+// Drop screenshots whose snapshot has been deleted or rotated out.
+async function scorlyPruneShots(list) {
+  const ids = new Set(list.map((s) => s.id));
+  const shots = await scorlyLoadShots();
+  const kept = shots.filter((s) => ids.has(s.id));
+  if (kept.length !== shots.length) await scorlyStorage.set({ [SCORLY_SHOT_KEY]: kept });
 }
 
 function scorlyRelativeTime(iso) {

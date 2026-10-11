@@ -12,6 +12,9 @@ const state = {
   diff: null,
   diffOnly: true,
   filter: '',
+  view: 'diff', // 'diff' | 'sbs' (side by side)
+  scoreA: null,
+  scoreB: null,
 };
 
 // ---------------------------------------------------------------------------
@@ -19,7 +22,7 @@ const state = {
 // ---------------------------------------------------------------------------
 
 document.addEventListener('DOMContentLoaded', async () => {
-  initTheme();
+  scorlyInitTheme();
   initChrome();
 
   const params = new URLSearchParams(location.search);
@@ -35,14 +38,28 @@ document.addEventListener('DOMContentLoaded', async () => {
 });
 
 function initChrome() {
-  el('themeBtn').addEventListener('click', toggleTheme);
   el('diffOnly').addEventListener('change', (e) => {
     state.diffOnly = e.target.checked;
     if (state.diff) renderSections();
   });
   el('filterInput').addEventListener('input', (e) => {
     state.filter = e.target.value.trim().toLowerCase();
-    if (state.diff) renderSections();
+    if (!state.diff) return;
+    if (state.view === 'sbs') filterSideBySide();
+    else renderSections();
+  });
+  el('viewSeg').addEventListener('click', (e) => {
+    const btn = e.target.closest('button[data-view]');
+    if (btn) setView(btn.dataset.view);
+  });
+  // "Ask your AI to fix these" in a side-by-side column copies a prompt for
+  // that column's page.
+  scorlyInitPanelInteractions((node) => {
+    const col = node.closest('[data-side]');
+    if (!col) return null;
+    return col.dataset.side === 'a'
+      ? { data: state.snapA.data, score: state.scoreA }
+      : { data: state.snapB.data, score: state.scoreB };
   });
   el('swapBtn').addEventListener('click', () => {
     const t = state.snapA;
@@ -78,30 +95,18 @@ function initChrome() {
   el('slotSelectB').addEventListener('change', (e) => selectSnapshot('b', e.target.value));
 }
 
-function initTheme() {
-  const saved = localStorage.getItem('scorly-theme');
-  if (saved) document.documentElement.setAttribute('data-theme', saved);
-}
-
-function toggleTheme() {
-  const current = document.documentElement.getAttribute('data-theme') ||
-    (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
-  const next = current === 'dark' ? 'light' : 'dark';
-  document.documentElement.setAttribute('data-theme', next);
-  localStorage.setItem('scorly-theme', next);
-}
-
 function showPane(which) {
   ['setupPane', 'diffPane', 'busyPane'].forEach((id) => {
     el(id).classList.toggle('hidden', id !== which);
   });
   const isDiff = which === 'diffPane';
-  el('diffOnlyWrap').classList.toggle('hidden', !isDiff);
+  el('viewSeg').classList.toggle('hidden', !isDiff);
+  el('diffOnlyWrap').classList.toggle('hidden', !isDiff || state.view === 'sbs');
   el('filterInput').classList.toggle('hidden', !isDiff);
   el('swapBtn').classList.toggle('hidden', !isDiff);
-  el('mapBtn').classList.toggle('hidden', !isDiff);
+  el('mapBtn').classList.toggle('hidden', !isDiff || state.view === 'sbs');
   el('exportWrap').classList.toggle('hidden', !isDiff);
-  if (!isDiff) closeExportMenu();
+  if (!isDiff) scorlyCloseExportMenu();
 }
 
 function busy(text) {
@@ -256,15 +261,109 @@ async function captureIntoSlot(slot, url) {
 // ---------------------------------------------------------------------------
 
 function renderDiff() {
-  const scoreA = scorlyComputeScore(state.snapA.data);
-  const scoreB = scorlyComputeScore(state.snapB.data);
-  state.diff = scorlyBuildDiff(state.snapA, state.snapB, scoreA, scoreB);
+  state.scoreA = scorlyComputeScore(state.snapA.data);
+  state.scoreB = scorlyComputeScore(state.snapB.data);
+  state.diff = scorlyBuildDiff(state.snapA, state.snapB, state.scoreA, state.scoreB);
 
   showPane('diffPane');
   renderSides();
   renderScoreTable();
-  renderSections();
+  el('sbsHost').innerHTML = ''; // rebuilt on demand for the new pair
+  setView(state.view);
   window.scrollTo(0, 0);
+}
+
+// ---------------------------------------------------------------------------
+// Side by side
+// ---------------------------------------------------------------------------
+// Every popup tab for both pages, rendered by the popup's own builders
+// (scorlyPagePanels in render.js) — the "what does each page look like"
+// companion to the Differences view's "what changed".
+
+function setView(view) {
+  state.view = view;
+  const sbs = view === 'sbs';
+  el('viewSeg').querySelectorAll('button').forEach((b) => {
+    const on = b.dataset.view === view;
+    b.classList.toggle('active', on);
+    b.setAttribute('aria-selected', String(on));
+  });
+  el('diffOnlyWrap').classList.toggle('hidden', sbs);
+  el('mapBtn').classList.toggle('hidden', sbs);
+  el('scoreTable').classList.toggle('hidden', sbs);
+  el('sectionHost').classList.toggle('hidden', sbs);
+  el('sbsHost').classList.toggle('hidden', !sbs);
+  if (sbs) {
+    if (!el('sbsHost').childNodes.length) renderSideBySide();
+    else renderSideBySideNav();
+    filterSideBySide();
+  } else {
+    renderSections();
+  }
+}
+
+function renderSideBySide() {
+  const host = el('sbsHost');
+  host.innerHTML = '';
+  const panelsA = scorlyPagePanels(state.snapA.data, state.scoreA, { idPrefix: 'a-' });
+  const panelsB = scorlyPagePanels(state.snapB.data, state.scoreB, { idPrefix: 'b-' });
+
+  panelsA.forEach((tab, i) => {
+    const sec = document.createElement('details');
+    sec.className = 'sec';
+    sec.id = 'sbs-' + tab.id;
+    sec.open = true;
+    const summary = document.createElement('summary');
+    const label = document.createElement('span');
+    label.textContent = tab.label;
+    summary.appendChild(label);
+    sec.appendChild(summary);
+
+    const cols = document.createElement('div');
+    cols.className = 'sbs-cols';
+    [['a', tab.html], ['b', panelsB[i].html]].forEach(([side, html]) => {
+      const col = document.createElement('div');
+      col.className = 'sbs-col';
+      col.dataset.side = side;
+      const tag = document.createElement('div');
+      tag.className = 'sbs-col-head';
+      tag.innerHTML = `<span class="side-tag side-${side}"></span>`;
+      tag.firstChild.textContent = side.toUpperCase();
+      tag.appendChild(document.createTextNode(' ' + (side === 'a' ? state.diff.a.label : state.diff.b.label)));
+      col.appendChild(tag);
+      const body = document.createElement('div');
+      body.className = 'pp narrow';
+      body.innerHTML = html;
+      col.appendChild(body);
+      cols.appendChild(col);
+    });
+    sec.appendChild(cols);
+    host.appendChild(sec);
+  });
+  renderSideBySideNav();
+}
+
+function renderSideBySideNav() {
+  const nav = el('jumpNav');
+  nav.innerHTML = '';
+  el('sbsHost').querySelectorAll(':scope > .sec').forEach((sec) => {
+    const link = document.createElement('a');
+    link.href = '#' + sec.id;
+    link.textContent = sec.querySelector('summary').textContent;
+    link.addEventListener('click', () => { sec.open = true; });
+    nav.appendChild(link);
+  });
+}
+
+// Panels are rendered markup, so the filter shows or hides whole tabs.
+function filterSideBySide() {
+  const nav = el('jumpNav');
+  el('sbsHost').querySelectorAll(':scope > .sec').forEach((sec) => {
+    const hide = !!state.filter && !sec.textContent.toLowerCase().includes(state.filter);
+    sec.classList.toggle('hidden', hide);
+    const link = nav.querySelector(`a[href="#${sec.id}"]`);
+    if (link) link.classList.toggle('hidden', hide);
+  });
 }
 
 function renderSides() {
@@ -464,7 +563,7 @@ function cell(side, value, lengthNote) {
     miss.textContent = '— not present';
     div.appendChild(miss);
   } else {
-    div.appendChild(document.createTextNode(value));
+    div.appendChild(document.createTextNode(displayImageSrc(value)));
   }
 
   if (lengthNote) {
@@ -691,6 +790,7 @@ function setRow(row) {
     sigil.className = 'sigil';
     sigil.textContent = item.status === 'a-only' ? '−' : item.status === 'b-only' ? '+' : '~';
     li.appendChild(sigil);
+    if (item.thumb) li.appendChild(thumbImg(item.thumb));
 
     const key = document.createElement('span');
     key.className = 'skey';
@@ -711,7 +811,7 @@ function setRow(row) {
 
 function checkRow(row) {
   const wrap = document.createElement('div');
-  wrap.className = 'check-row';
+  wrap.className = 'vcheck-row';
 
   const left = document.createElement('div');
   const label = document.createElement('div');
@@ -840,36 +940,6 @@ const EXPORTERS = {
   md: exportDiffMarkdown,
 };
 
-function closeExportMenu() {
-  el('exportPop').classList.add('hidden');
-  el('exportBtn').setAttribute('aria-expanded', 'false');
-}
-
-function toggleExportMenu() {
-  const open = el('exportPop').classList.toggle('hidden') === false;
-  el('exportBtn').setAttribute('aria-expanded', String(open));
-  if (open) el('exportPop').querySelector('button').focus();
-}
-
 function initExportMenu() {
-  el('exportBtn').addEventListener('click', (e) => {
-    e.stopPropagation();
-    toggleExportMenu();
-  });
-
-  el('exportPop').addEventListener('click', (e) => {
-    const btn = e.target.closest('button[data-export]');
-    if (!btn || !state.diff) return;
-    closeExportMenu();
-    EXPORTERS[btn.dataset.export](state.diff);
-  });
-
-  document.addEventListener('click', (e) => {
-    if (!e.target.closest('#exportWrap')) closeExportMenu();
-  });
-  document.addEventListener('keydown', (e) => {
-    if (e.key !== 'Escape') return;
-    closeExportMenu();
-    el('exportBtn').focus();
-  });
+  scorlyInitExportMenu((format) => { if (state.diff) EXPORTERS[format](state.diff); });
 }

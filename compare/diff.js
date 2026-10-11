@@ -155,23 +155,28 @@ function scorlySetRow(label, listA, listB, keyFn, valueFn, opts) {
   (listA || []).forEach((item) => { if (!mapA.has(keyFn(item))) mapA.set(keyFn(item), item); });
   (listB || []).forEach((item) => { if (!mapB.has(keyFn(item))) mapB.set(keyFn(item), item); });
 
+  // opts.thumb(item) → an image URL to preview beside the item (Images).
+  const thumbFn = opts && opts.thumb;
+  const thumb = (item) => (thumbFn ? { thumb: thumbFn(item) } : {});
   const items = [];
   mapA.forEach((item, key) => {
     if (!mapB.has(key)) {
-      items.push({ key, status: 'a-only', a: valueFn(item), b: null });
+      items.push(Object.assign({ key, status: 'a-only', a: valueFn(item), b: null }, thumb(item)));
       return;
     }
     const va = valueFn(item);
     const vb = valueFn(mapB.get(key));
-    if (va !== vb) items.push({ key, status: 'changed', a: va, b: vb, ops: scorlyWordDiff(va, vb) });
+    if (va !== vb) items.push(Object.assign({ key, status: 'changed', a: va, b: vb, ops: scorlyWordDiff(va, vb) }, thumb(mapB.get(key))));
   });
   mapB.forEach((item, key) => {
-    if (!mapA.has(key)) items.push({ key, status: 'b-only', a: null, b: valueFn(item) });
+    if (!mapA.has(key)) items.push(Object.assign({ key, status: 'b-only', a: null, b: valueFn(item) }, thumb(item)));
   });
 
   const order = { 'a-only': 0, 'b-only': 1, changed: 2 };
   items.sort((x, y) => (order[x.status] - order[y.status]) || x.key.localeCompare(y.key));
 
+  const extra = Object.assign({}, opts || {});
+  delete extra.thumb;
   return Object.assign({
     kind: 'set',
     label,
@@ -179,7 +184,7 @@ function scorlySetRow(label, listA, listB, keyFn, valueFn, opts) {
     countA: mapA.size,
     countB: mapB.size,
     status: items.length ? 'changed' : 'same',
-  }, opts || {});
+  }, extra);
 }
 
 function scorlySeqRow(label, listA, listB, keyFn, renderFn, opts) {
@@ -433,10 +438,10 @@ function scorlyBuildDiff(snapA, snapB, scoreA, scoreB) {
       scorlyNumRow('Missing width/height', a.images && a.images.missingDimensions, b.images && b.images.missingDimensions, { betterWhen: 'lower' }),
       scorlyNumRow('Lazy-loaded', a.images && a.images.lazyLoaded, b.images && b.images.lazyLoaded),
       scorlySetRow('Alt text', a.images && a.images.list, b.images && b.images.list,
-        (i) => scorlyPathOf(i.src), (i) => i.alt || '(no alt)'),
+        (i) => scorlyImageKey(i.src), (i) => i.alt || '(no alt)', { thumb: (i) => i.src }),
       scorlySetRow('Image details', a.images && a.images.list, b.images && b.images.list,
-        (i) => scorlyPathOf(i.src), scorlyImageFacts,
-        { note: 'intrinsic→rendered size · format · loading attrs' }),
+        (i) => scorlyImageKey(i.src), scorlyImageFacts,
+        { note: 'intrinsic→rendered size · format · loading attrs', thumb: (i) => i.src }),
     ],
   });
 
@@ -658,6 +663,19 @@ function scorlyImageFacts(i) {
   return parts.join(' · ') || '(no data — recapture with the current version)';
 }
 
+// Identity for an image. Matched on path like links; an inline data: URI
+// (often tens of KB of base64) becomes its type, size and a short content
+// hash — still unique per image, but readable in a list.
+function scorlyImageKey(src) {
+  if (!src || !/^data:/i.test(src)) return scorlyPathOf(src);
+  const comma = src.indexOf(',');
+  const mime = (/^data:([^;,]+)/i.exec(src) || [])[1] || 'data';
+  const bytes = /;base64/i.test(src.slice(0, comma)) ? Math.round((src.length - comma - 1) * 0.75) : src.length - comma - 1;
+  let hash = 5381;
+  for (let i = comma + 1; i < src.length; i++) hash = ((hash * 33) ^ src.charCodeAt(i)) >>> 0;
+  return `inline ${mime} · ${scorlyFormatKb(bytes)} · #${hash.toString(16).slice(0, 6)}`;
+}
+
 // Path-only identity, so http://localhost:3000/about and
 // https://example.com/about count as the same link.
 function scorlyPathOf(url) {
@@ -668,4 +686,59 @@ function scorlyPathOf(url) {
   } catch (e) {
     return String(url);
   }
+}
+
+// ---------------------------------------------------------------------------
+// Single-page report
+// ---------------------------------------------------------------------------
+// The full-report view shows the same sections as the compare view, for one
+// page. Rather than keep a second copy of the section list in step with the
+// one above, the page is diffed against an empty snapshot: every field it has
+// lands on side A (sets as a-only items, sequences as del ops), and the rows
+// are flattened to single values here.
+
+const SCORLY_REPORT_HINTS = {
+  social: 'Every og: and twitter: tag found on the page.',
+  links: 'Internal links are listed by path.',
+  aicopy: 'Both scores read higher-is-better like the rest of the report. Vibe-code confidence is a verdict on the toolchain rather than a fault. Neither detection can prove how a page was made — they count surface patterns and name the evidence.',
+  requests: 'Every request the page made: type · transferred size.',
+};
+
+function scorlyBuildReport(snap, score) {
+  const none = { overallScore: 0, categoryScores: {}, allChecks: [], counts: {} };
+  const diff = scorlyBuildDiff(snap, { data: {}, origin: snap.origin }, score, none);
+  const background = snap.origin === 'background';
+
+  const flatten = (row) => {
+    const out = Object.assign({}, row, { value: row.a });
+    if (row.kind === 'set') {
+      out.items = row.items.map((i) => ({ key: i.key, value: i.a, thumb: i.thumb }))
+        .sort((x, y) => x.key.localeCompare(y.key));
+      out.count = row.countA;
+    }
+    if (row.kind === 'seq') out.items = row.ops.map((op) => op.a);
+    if (row.kind === 'text') out.len = row.lenA;
+    return out;
+  };
+
+  const sections = diff.sections
+    .filter((s) => s.id !== 'checks')
+    .map((s) => {
+      let hint = SCORLY_REPORT_HINTS[s.id] || s.hint || null;
+      if (s.id === 'perf') {
+        hint = background
+          ? 'Captured in a background tab, where the browser never paints — LCP, CLS and request counts are missing or understated. Re-open the report from a visible tab for a reliable read.'
+          : 'Measured in a visible tab, on your machine and connection.';
+      }
+      return { id: s.id, label: s.label, hint, unreliable: s.id === 'perf' && background, rows: s.rows.map(flatten) };
+    });
+
+  return {
+    page: diff.a,
+    score,
+    categories: Object.keys(SCORLY_CATEGORY_LABELS)
+      .filter((key) => score.categoryScores[key] != null)
+      .map((key) => ({ key, label: SCORLY_CATEGORY_LABELS[key], score: score.categoryScores[key] })),
+    sections,
+  };
 }

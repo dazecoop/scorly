@@ -673,7 +673,11 @@ function exportCsv(data, scoreResult) {
 // not a text dump. Core jsPDF only (no autotable plugin bundled), so the
 // table/checklist drawing below is hand-rolled but shared across sections.
 // ---------------------------------------------------------------------------
-function exportPdf(data, scoreResult) {
+// opts.screenshot: an optional JPEG data URL (the full-report view passes the
+// page screenshot, pre-cropped to PDF_SHOT_ASPECT) drawn under the letterhead.
+const PDF_SHOT_ASPECT = 16 / 7;
+
+function exportPdf(data, scoreResult, opts) {
   const m = buildReportModel(data, scoreResult);
   const insights = m.insights;
   const { jsPDF } = window.jspdf;
@@ -884,6 +888,17 @@ function exportPdf(data, scoreResult) {
   doc.setFontSize(8.5);
   doc.text('Generated ' + new Date(data.analyzedAt).toLocaleString(), pageWidth - marginX, 78, { align: 'right' });
   y = 118;
+
+  if (opts && opts.screenshot) {
+    const shotH = contentWidth / PDF_SHOT_ASPECT;
+    try {
+      doc.addImage(opts.screenshot, 'JPEG', marginX, y, contentWidth, shotH);
+      doc.setDrawColor(...COLOR.border);
+      doc.setLineWidth(0.8);
+      doc.rect(marginX, y, contentWidth, shotH);
+      y += shotH + 16;
+    } catch (e) { /* unreadable image: the report is complete without it */ }
+  }
 
   // =========================================================================
   // Executive summary

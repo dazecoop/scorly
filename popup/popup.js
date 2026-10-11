@@ -98,6 +98,10 @@ function lockInScore() {
 // session only — it is never put on lastData, so it never reaches saved
 // snapshots or exports (and their storage quota).
 let heroGen = 0;
+// A sharper copy of the same capture for the full-report banner, which is
+// ~1200px wide rather than 500. Only written to storage when the user
+// actually opens the report.
+let reportShot = null;
 
 function setHeroState(state, src) {
   const hero = el('hero');
@@ -139,11 +143,13 @@ async function captureHero(tab) {
   if (!hadImage) setHeroState('loading');
   try {
     const raw = await browserApi.tabs.captureVisibleTab(tab.windowId, { format: 'jpeg', quality: 85 });
-    const src = await downscaleImage(raw, 1000);
+    const [src, big] = await Promise.all([downscaleImage(raw, 1000), downscaleImage(raw, 2000)]);
     if (gen !== heroGen) return; // a newer analysis started meanwhile
+    reportShot = big;
     setHeroState('ready', src);
   } catch (err) {
     if (gen !== heroGen) return;
+    if (!hadImage) reportShot = null;
     // Chrome rate-limits captures (~2/s), so a fast re-analyze can fail —
     // keep the previous shot of the same tab rather than dropping it.
     if (!hadImage) setHeroState('none');
@@ -210,8 +216,13 @@ function showError(msg) {
 function setAnalysisPending(pending) {
   const save = el('saveSnapBtn');
   const compare = el('compareBtn');
+  const report = el('reportBtn');
   save.disabled = pending;
   compare.disabled = pending;
+  report.disabled = pending;
+  report.title = pending
+    ? 'Finishing link and origin checks…'
+    : 'Open every detail for this page in a new tab, with export';
   save.title = pending
     ? 'Finishing link and origin checks…'
     : 'Store this page locally so you can diff it against another page later';
@@ -282,74 +293,6 @@ function initPlatformSwitch() {
   });
 }
 
-// ---- "Ask your AI to fix these" ----
-// Builds a self-contained prompt (page context + the clicked list of
-// findings) and copies it, so the user can paste it straight into any AI
-// assistant. Pure clipboard write — nothing is sent anywhere.
-function buildAiFixPrompt(kind, checks) {
-  const lines = [];
-  lines.push('You are helping me fix SEO problems on my website. Below is an automated audit of one page, produced by the Scorly browser extension.');
-  lines.push('');
-  lines.push(`Page URL: ${lastData.url}`);
-  if (lastData.title && lastData.title.text) lines.push(`Page title: ${lastData.title.text}`);
-  if (lastScoreResult) lines.push(`Current SEO score: ${lastScoreResult.overallScore}/100`);
-  lines.push(`Audited: ${new Date(lastData.analyzedAt).toLocaleString()}`);
-  lines.push('');
-  lines.push(kind === 'issues'
-    ? `The audit found ${checks.length} failing check(s) on this page:`
-    : `The audit raised ${checks.length} warning(s) on this page (lower severity than hard failures, but worth fixing):`);
-  lines.push('');
-  checks.forEach((c, i) => {
-    const tags = [c.severity ? c.severity.toUpperCase() : null, c.category].filter(Boolean).join(' · ');
-    lines.push(`${i + 1}. ${c.label}${tags ? ` [${tags}]` : ''}`);
-    if (c.detail) lines.push(`   ${c.detail}`);
-  });
-  lines.push('');
-  lines.push('For each item, please:');
-  lines.push('1. Explain briefly why it matters.');
-  lines.push('2. Give me the exact fix — the HTML/code/config to add or change.');
-  lines.push('3. Start with the highest-impact items.');
-  lines.push('');
-  lines.push('If you need to know my stack (CMS, framework, hosting) to give exact steps, ask me that first.');
-  return lines.join('\n');
-}
-
-function copyText(text) {
-  if (navigator.clipboard && navigator.clipboard.writeText) {
-    return navigator.clipboard.writeText(text);
-  }
-  // Fallback for contexts where the async clipboard API is unavailable.
-  return new Promise((resolve, reject) => {
-    const ta = document.createElement('textarea');
-    ta.value = text;
-    ta.style.position = 'fixed';
-    ta.style.opacity = '0';
-    document.body.appendChild(ta);
-    ta.select();
-    const ok = document.execCommand('copy');
-    ta.remove();
-    ok ? resolve() : reject(new Error('copy failed'));
-  });
-}
-
-function initAiFixButtons() {
-  document.addEventListener('click', async (e) => {
-    const btn = e.target.closest('.ai-fix-btn');
-    if (!btn || !lastData) return;
-    let checks;
-    try { checks = JSON.parse(btn.dataset.aifix); } catch (err) { return; }
-    const original = btn.innerHTML;
-    try {
-      await copyText(buildAiFixPrompt(btn.dataset.aifixKind, checks));
-      btn.innerHTML = 'Prompt copied ✓ — paste it into your AI assistant';
-    } catch (err) {
-      btn.innerHTML = 'Copy failed';
-    }
-    btn.disabled = true;
-    setTimeout(() => { btn.innerHTML = original; btn.disabled = false; }, 2200);
-  });
-}
-
 function initCountTiles() {
   el('countRow').addEventListener('click', (e) => {
     const tile = e.target.closest('.count-tile');
@@ -359,17 +302,11 @@ function initCountTiles() {
   });
 }
 
-// The AI Visibility breakdown bars double as the AI Insights tab's table of
-// contents: each one scrolls to the panel that explains it. Delegated on the
-// document because the tab's markup is rebuilt on every analysis, the same
-// reason initAiFixButtons is.
-function initInsightBars() {
-  document.addEventListener('click', (e) => {
-    const bar = e.target.closest('[data-scrollto]');
-    if (!bar) return;
-    const target = document.getElementById(bar.dataset.scrollto);
-    if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
-  });
+// "Ask your AI to fix these" buttons and the AI Visibility breakdown bars
+// are handled by scorlyInitPanelInteractions (render.js), shared with the
+// full-report and compare views.
+function initPanelInteractions() {
+  scorlyInitPanelInteractions(() => (lastData ? { data: lastData, score: lastScoreResult } : null));
 }
 
 function initExportButtons() {
@@ -436,6 +373,14 @@ function initCompare() {
     window.close();
   });
 
+  el('reportBtn').addEventListener('click', async () => {
+    const id = await saveCurrentSnapshot();
+    if (!id) return;
+    if (reportShot) await scorlySaveShot(id, reportShot);
+    await browserApi.tabs.create({ url: browserApi.runtime.getURL('compare/report.html') + '?snap=' + encodeURIComponent(id) });
+    window.close();
+  });
+
   refreshSnapCount();
 }
 
@@ -446,8 +391,7 @@ document.addEventListener('DOMContentLoaded', () => {
   initTabs();
   initPlatformSwitch();
   initCountTiles();
-  initInsightBars();
-  initAiFixButtons();
+  initPanelInteractions();
   initExportButtons();
   initTheme();
   initCompare();

@@ -128,18 +128,72 @@ function renderGroupedChecks(checks, opts) {
     </div>`;
   }
 
+  // .group-list is a plain block in the popup; wide views flow it into columns.
+  const list = (items) => `<div class="group-list">${items.map(row).join('')}</div>`;
   let html = '';
   html += `<div class="group-title"${idAttr('group-fail')}>✕ Issues (${issues.length})</div>`;
-  html += issues.length ? issues.map(row).join('') + aiFixButton('issues', issues) : '<p class="empty-note">No issues here — nothing failed.</p>';
+  html += issues.length ? list(issues) + aiFixButton('issues', issues) : '<p class="empty-note">No issues here — nothing failed.</p>';
   html += `<div class="group-title"${idAttr('group-warn')}>! Warnings (${warnings.length})</div>`;
-  html += warnings.length ? warnings.map(row).join('') + aiFixButton('warnings', warnings) : '<p class="empty-note">No warnings here.</p>';
+  html += warnings.length ? list(warnings) + aiFixButton('warnings', warnings) : '<p class="empty-note">No warnings here.</p>';
   html += `<div class="group-title"${idAttr('group-pass')}>✓ Passed (${passed.length})</div>`;
-  html += passed.length ? passed.map(row).join('') : '<p class="empty-note">Nothing passed here yet.</p>';
+  html += passed.length ? list(passed) : '<p class="empty-note">Nothing passed here yet.</p>';
   return html;
 }
 
 function categoryScoreBox(score, label) {
   return `<div class="score-box"><div class="score-box-num" style="color:${scoreColor(score)}">${score}/100</div><div class="score-box-label">${escapeHtml(label)}</div></div>`;
+}
+
+// Score ring as used by the Security and AI Insights tabs and the full
+// report header. caption may contain <br>; small = the 90px variant.
+function scoreRingHtml(score, caption, small) {
+  return `<div class="score-circle-wrap${small ? ' small' : ''}">
+      <svg viewBox="0 0 120 120" class="score-circle">
+        <circle cx="60" cy="60" r="52" class="score-bg" />
+        <circle cx="60" cy="60" r="52" class="score-fg" style="stroke:${scoreColor(score)};stroke-dashoffset:${326.7 - (326.7 * score) / 100}"/>
+      </svg>
+      <div class="score-number" style="color:${scoreColor(score)}">${score}</div>
+      <div class="score-caption">${caption}</div>
+    </div>`;
+}
+
+// One bar per scoring category. opts.pending: the popup's first paint, while
+// Technical still waits on network checks.
+function categoryBarsHtml(categoryScores, opts) {
+  const pending = !!(opts && opts.pending);
+  // Technical is the one category still waiting on network checks
+  // (robots.txt, sitemap, favicon, link targets) during a pending render —
+  // its bar shimmers until the real score exists instead of showing a number
+  // that is about to change.
+  const PENDING_CATEGORIES = { technical: true };
+  return Object.keys(CATEGORY_LABELS).map((key) => {
+    const score = categoryScores[key];
+    // No score at all: a snapshot captured before this category existed.
+    if (score == null) {
+      return `
+      <div class="bar-row" title="Not captured on this snapshot — re-analyze to score it">
+        <div class="bar-label">${CATEGORY_LABELS[key]}</div>
+        <div class="bar-track"></div>
+        <div class="bar-value">—</div>
+      </div>`;
+    }
+    if (pending && PENDING_CATEGORIES[key]) {
+      // Mirrors the bottom progress bar (popup.js updates this fill on the
+      // same trickle), in a neutral loading color until the score locks in.
+      return `
+      <div class="bar-row">
+        <div class="bar-label">${CATEGORY_LABELS[key]}</div>
+        <div class="bar-track"><div class="bar-fill bar-fill-pending" id="techPendingFill" style="width:0%"></div></div>
+        <div class="bar-value">…</div>
+      </div>`;
+    }
+    return `
+      <div class="bar-row">
+        <div class="bar-label">${CATEGORY_LABELS[key]}</div>
+        <div class="bar-track"><div class="bar-fill" style="width:${score}%;background:${scoreColor(score)}"></div></div>
+        <div class="bar-value">${score}</div>
+      </div>`;
+  }).join('');
 }
 
 // ===================== OVERVIEW =====================
@@ -169,50 +223,24 @@ function renderOverview(data, scoreResult, opts) {
   el('warningsCount').textContent = counts.warnings;
   el('passedCount').textContent = counts.passed;
 
-  // Technical is the one category still waiting on network checks
-  // (robots.txt, sitemap, favicon, link targets) during a pending render —
-  // its bar shimmers until the real score exists instead of showing a number
-  // that is about to change.
-  const PENDING_CATEGORIES = { technical: true };
-  const barsHtml = Object.keys(CATEGORY_LABELS).map((key) => {
-    const score = categoryScores[key];
-    // No score at all: a snapshot captured before this category existed.
-    if (score == null) {
-      return `
-      <div class="bar-row" title="Not captured on this snapshot — re-analyze to score it">
-        <div class="bar-label">${CATEGORY_LABELS[key]}</div>
-        <div class="bar-track"></div>
-        <div class="bar-value">—</div>
-      </div>`;
-    }
-    if (pending && PENDING_CATEGORIES[key]) {
-      // Mirrors the bottom progress bar (popup.js updates this fill on the
-      // same trickle), in a neutral loading color until the score locks in.
-      return `
-      <div class="bar-row">
-        <div class="bar-label">${CATEGORY_LABELS[key]}</div>
-        <div class="bar-track"><div class="bar-fill bar-fill-pending" id="techPendingFill" style="width:0%"></div></div>
-        <div class="bar-value">…</div>
-      </div>`;
-    }
-    return `
-      <div class="bar-row">
-        <div class="bar-label">${CATEGORY_LABELS[key]}</div>
-        <div class="bar-track"><div class="bar-fill" style="width:${score}%;background:${scoreColor(score)}"></div></div>
-        <div class="bar-value">${score}</div>
-      </div>`;
-  }).join('');
-  el('scoreBars').innerHTML = barsHtml;
+  el('scoreBars').innerHTML = categoryBarsHtml(categoryScores, { pending });
 
-  const og = data.og || {};
+  el('serpPreview').innerHTML = serpPreviewHtml(data);
+  el('statGrid').innerHTML = statGridHtml(data);
+  el('allChecksPanel').innerHTML = renderGroupedChecks(scoreResult.allChecks, { showCategory: true, idPrefix: 'overview' });
+}
+
+function serpPreviewHtml(data) {
   const serpTitle = truncate(data.title.text || data.hostname, 65);
   const serpDesc = truncate(data.metaDescription.text || data.firstParagraph || 'No description available.', 160);
-  el('serpPreview').innerHTML = `
+  return `
     <div class="serp-url">${escapeHtml(data.hostname)}${escapeHtml(new URL(data.url).pathname !== '/' ? ' › ' + new URL(data.url).pathname.split('/').filter(Boolean).join(' › ') : '')}</div>
     <div class="serp-title">${escapeHtml(serpTitle)}</div>
     <div class="serp-desc">${escapeHtml(serpDesc)}</div>
   `;
+}
 
+function statGridHtml(data) {
   const stats = [
     ['Word count', data.content.wordCount.toLocaleString()],
     ['Page size', formatBytes(data.htmlSize)],
@@ -224,18 +252,20 @@ function renderOverview(data, scoreResult, opts) {
     ['Headings', `H1:${data.headings.counts.h1} H2:${data.headings.counts.h2} H3:${data.headings.counts.h3}`],
     ['Structured data', data.jsonLdTypes.join(', ') || 'None'],
   ];
-  el('statGrid').innerHTML = stats.map(([label, value]) => `
+  return stats.map(([label, value]) => `
     <div class="stat-card">
       <div class="stat-label">${escapeHtml(label)}</div>
       <div class="stat-value">${escapeHtml(String(value))}</div>
     </div>
   `).join('');
-
-  el('allChecksPanel').innerHTML = renderGroupedChecks(scoreResult.allChecks, { showCategory: true, idPrefix: 'overview' });
 }
 
 // ===================== META =====================
 function renderMetaTab(data) {
+  el('metaContent').innerHTML = metaTabHtml(data);
+}
+
+function metaTabHtml(data) {
   function card(label, value, status, extra) {
     return `
       <div class="meta-card">
@@ -259,11 +289,15 @@ function renderMetaTab(data) {
     card('Language (html lang)', data.lang, data.lang ? 'pass' : 'warn'),
     card('Favicon', data.favicon, data.faviconOk === undefined ? '' : (data.faviconOk ? 'pass' : 'warn'), data.faviconOk === undefined ? 'checking…' : ''),
   ].join('');
-  el('metaContent').innerHTML = html;
+  return html;
 }
 
 // ===================== CONTENT =====================
 function renderContentTab(data, scoreResult) {
+  el('contentContent').innerHTML = contentTabHtml(data, scoreResult);
+}
+
+function contentTabHtml(data, scoreResult) {
   const c = data.content;
   const tiles = [
     [c.wordCount, 'Words'],
@@ -300,11 +334,15 @@ function renderContentTab(data, scoreResult) {
   }
 
   html += '<div class="panel-title">Checks</div>' + renderGroupedChecks(scoreResult.categories.content);
-  el('contentContent').innerHTML = html;
+  return html;
 }
 
 // ===================== HEADINGS =====================
 function renderHeadingsTab(data, scoreResult) {
+  el('headingsContent').innerHTML = headingsTabHtml(data, scoreResult);
+}
+
+function headingsTabHtml(data, scoreResult) {
   const list = data.headings.list;
   let html = '';
   if (!list.length) {
@@ -318,11 +356,15 @@ function renderHeadingsTab(data, scoreResult) {
     `).join('') + '</div>';
   }
   html += '<div class="panel-title">Checks</div>' + renderGroupedChecks(scoreResult.categories.content.filter((c) => ['h1', 'headings'].includes(c.id)));
-  el('headingsContent').innerHTML = html;
+  return html;
 }
 
 // ===================== LINKS (summary) =====================
 function renderLinksTab(data) {
+  el('linksContent').innerHTML = linksTabHtml(data);
+}
+
+function linksTabHtml(data) {
   const l = data.links;
   const lc = data.linkCheck;
   let html = `<div class="tile-grid">
@@ -362,15 +404,18 @@ function renderLinksTab(data) {
   checks.push({ status: l.missingAnchorText > 0 ? 'warn' : 'pass', severity: 'med', label: l.missingAnchorText > 0 ? `${l.missingAnchorText} link(s) with missing anchor text` : 'All links have anchor text', detail: '' });
   checks.push({ status: 'pass', severity: 'low', label: `${l.total} total links found`, detail: '' });
   html += renderGroupedChecks(checks);
-  el('linksContent').innerHTML = html;
+  return html;
 }
 
 function renderLinkListTab(targetId, list, emptyMsg) {
+  el(targetId).innerHTML = linkListHtml(list, emptyMsg);
+}
+
+function linkListHtml(list, emptyMsg) {
   if (!list.length) {
-    el(targetId).innerHTML = `<div class="empty-state"><svg class="empty-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg><div>${escapeHtml(emptyMsg)}</div></div>`;
-    return;
+    return `<div class="empty-state"><svg class="empty-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg><div>${escapeHtml(emptyMsg)}</div></div>`;
   }
-  el(targetId).innerHTML = '<div class="link-list">' + list.map((l) => `
+  return '<div class="link-list">' + list.map((l) => `
     <div class="link-row">
       <div class="link-text">${escapeHtml(l.text || '(no anchor text)')}${l.nofollow ? ' <span class="tag-nofollow">nofollow</span>' : ''}</div>
       <div class="link-href">${escapeHtml(truncate(l.href, 90))}</div>
@@ -380,6 +425,12 @@ function renderLinkListTab(targetId, list, emptyMsg) {
 
 // ===================== IMAGES =====================
 function renderImagesTab(data) {
+  el('imagesContent').innerHTML = imagesTabHtml(data);
+}
+
+// opts.limit: how many image rows to list (the popup keeps it to 60).
+function imagesTabHtml(data, opts) {
+  const limit = (opts && opts.limit) || 60;
   const imgs = data.images;
   let html = `<div class="tile-grid">
     <div class="tile"><div class="tile-num">${imgs.total}</div><div class="tile-label">Total</div></div>
@@ -394,7 +445,7 @@ function renderImagesTab(data) {
   if (!imgs.list.length) {
     html += `<div class="empty-state"><svg class="empty-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg><div>No images found</div></div>`;
   } else {
-    html += '<div class="image-list">' + imgs.list.slice(0, 60).map((img) => {
+    html += '<div class="image-list">' + imgs.list.slice(0, limit).map((img) => {
       const facts = [];
       if (img.naturalW) {
         facts.push(`${img.naturalW}×${img.naturalH}` +
@@ -421,11 +472,15 @@ function renderImagesTab(data) {
       </div>`;
     }).join('') + '</div>';
   }
-  el('imagesContent').innerHTML = html;
+  return html;
 }
 
 // ===================== SCHEMA =====================
 function renderSchemaTab(data, scoreResult) {
+  el('schemaContent').innerHTML = schemaTabHtml(data, scoreResult);
+}
+
+function schemaTabHtml(data, scoreResult) {
   let html = '';
   if (!data.jsonLd.length) {
     html += `<div class="empty-state"><svg class="empty-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg><div>No structured data found</div></div>`;
@@ -453,22 +508,30 @@ function renderSchemaTab(data, scoreResult) {
   }
   html += categoryScoreBox(scoreResult.categoryScores.schema, 'SCHEMA SCORE');
   html += '<div class="panel-title">Checks</div>' + renderGroupedChecks(scoreResult.categories.schema);
-  el('schemaContent').innerHTML = html;
+  return html;
 }
 
 // ===================== TECH =====================
 function renderTechTab(data, scoreResult) {
+  el('techContent').innerHTML = techTabHtml(data, scoreResult);
+}
+
+function techTabHtml(data, scoreResult) {
   const rows = scoreResult.categories.technical.filter((c) => ['https', 'canonical', 'viewport', 'lang', 'favicon', 'doctype'].includes(c.id));
   let html = '<table class="check-table"><thead><tr><th>Check</th><th>Status</th></tr></thead><tbody>' +
     rows.map((c) => `<tr><td>${escapeHtml(c.label)}</td><td><span class="status-pill status-${c.status}">${c.status.toUpperCase()}</span></td></tr>`).join('') +
     '</tbody></table>';
   html += categoryScoreBox(scoreResult.categoryScores.technical, 'TECHNICAL SCORE');
   html += '<div class="panel-title">All Checks</div>' + renderGroupedChecks(scoreResult.categories.technical);
-  el('techContent').innerHTML = html;
+  return html;
 }
 
 // ===================== PERF =====================
 function renderPerfTab(data, scoreResult) {
+  el('perfContent').innerHTML = perfTabHtml(data, scoreResult);
+}
+
+function perfTabHtml(data, scoreResult) {
   const p = data.perf;
   const score = scoreResult.categoryScores.perf;
   const ms = (v) => (v != null ? (v >= 1000 ? (v / 1000).toFixed(1) + 's' : v + 'ms') : '—');
@@ -500,10 +563,10 @@ function renderPerfTab(data, scoreResult) {
     ['ttfb', 'Time to First Byte'], ['fcp', 'First Contentful Paint'], ['lcp', 'Largest Contentful Paint'],
     ['cls', 'Cumulative Layout Shift'], ['tbt', 'Total Blocking Time ≈'], ['inp', 'Interaction to Next Paint'],
   ].map(([m, label]) => renderVitalGauge(m, p[m], label)).filter(Boolean);
-  if (gauges.length) html += '<div class="panel-title">Web Vitals vs Google bands</div>' + gauges.join('');
+  if (gauges.length) html += '<div class="panel-title">Web Vitals vs Google bands</div><div class="gauge-grid">' + gauges.join('') + '</div>';
   html += renderWaterfall(data.resources);
   html += '<div class="panel-title">Checks</div>' + renderGroupedChecks(scoreResult.categories.perf);
-  el('perfContent').innerHTML = html;
+  return html;
 }
 
 // A green/amber/red banded bar with a marker showing where the measured
@@ -604,17 +667,14 @@ function renderWaterfall(resources) {
 
 // ===================== SECURITY =====================
 function renderSecurityTab(data, scoreResult) {
+  el('securityContent').innerHTML = securityTabHtml(data, scoreResult);
+}
+
+function securityTabHtml(data, scoreResult) {
   const score = scoreResult.categoryScores.security;
   const s = data.security;
   let html = `<div class="score-row compact">
-    <div class="score-circle-wrap small">
-      <svg viewBox="0 0 120 120" class="score-circle">
-        <circle cx="60" cy="60" r="52" class="score-bg" />
-        <circle cx="60" cy="60" r="52" class="score-fg" style="stroke:${scoreColor(score)};stroke-dashoffset:${326.7 - (326.7 * score) / 100}"/>
-      </svg>
-      <div class="score-number" style="color:${scoreColor(score)}">${score}</div>
-      <div class="score-caption">SECURITY</div>
-    </div>
+    ${scoreRingHtml(score, 'SECURITY', true)}
     <div class="bar-list">
       <div class="bar-row"><div class="bar-label">HTTPS</div><div class="bar-track"><div class="bar-fill" style="width:${s.https ? 100 : 0}%;background:${s.https ? 'var(--pass)' : 'var(--fail)'}"></div></div><div class="bar-value">${s.https ? 'YES' : 'NO'}</div></div>
       <div class="bar-row"><div class="bar-label">Mixed</div><div class="bar-track"><div class="bar-fill" style="width:${s.mixedContentCount === 0 ? 100 : 20}%;background:${s.mixedContentCount === 0 ? 'var(--pass)' : 'var(--fail)'}"></div></div><div class="bar-value">${s.mixedContentCount}</div></div>
@@ -623,15 +683,18 @@ function renderSecurityTab(data, scoreResult) {
     </div>
   </div>`;
   html += '<div class="panel-title">Checks</div>' + renderGroupedChecks(scoreResult.categories.security);
-  el('securityContent').innerHTML = html;
+  return html;
 }
 
 // ===================== ACCESSIBILITY =====================
 function renderA11yTab(data, scoreResult) {
+  el('a11yContent').innerHTML = a11yTabHtml(data, scoreResult);
+}
+
+function a11yTabHtml(data, scoreResult) {
   const ax = data.a11y;
   if (!ax) {
-    el('a11yContent').innerHTML = `<div class="empty-state"><svg class="empty-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg><div>Not captured on this snapshot — re-analyze the page to run the accessibility checks.</div></div>`;
-    return;
+    return `<div class="empty-state"><svg class="empty-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg><div>Not captured on this snapshot — re-analyze the page to run the accessibility checks.</div></div>`;
   }
   const c = ax.contrast;
   const tiles = [
@@ -657,7 +720,7 @@ function renderA11yTab(data, scoreResult) {
   }
   html += `<p class="checks-intro">Computed from the colours and markup the browser actually rendered. ${c.skipped ? `${c.skipped} text element(s) over images or gradients were skipped — their contrast cannot be read from styles alone. ` : ''}Automated checks catch roughly a third of accessibility problems; keyboard and screen-reader testing find the rest.</p>`;
   html += '<div class="panel-title">Checks</div>' + renderGroupedChecks(scoreResult.categories.a11y);
-  el('a11yContent').innerHTML = html;
+  return html;
 }
 
 // ===================== OPEN GRAPH PREVIEW =====================
@@ -679,7 +742,10 @@ function imgBlock(image, fallbackText) {
 }
 
 function renderOgCard(platform, data) {
-  const area = el('ogPreviewArea');
+  el('ogPreviewArea').innerHTML = ogCardHtml(platform, data);
+}
+
+function ogCardHtml(platform, data) {
   const siteUpper = escapeHtml((data.siteName || '').toUpperCase());
   let html = '';
   switch (platform) {
@@ -700,15 +766,19 @@ function renderOgCard(platform, data) {
       break;
   }
   if (!data.hasOg) html += `<div class="fallback-tag">⚠ Fallback preview — no Open Graph tags present</div>`;
-  area.innerHTML = html;
+  return html;
 }
 
 function renderOgTab(data) {
   const preview = getOgPreviewData(data);
-  el('ogSourceNote').textContent = preview.hasOg
+  el('ogSourceNote').textContent = ogSourceText(preview);
+  return preview;
+}
+
+function ogSourceText(preview) {
+  return preview.hasOg
     ? 'Open Graph tags detected — showing how this page will appear when shared.'
     : 'No Open Graph tags found. Showing a best-effort fallback preview using the page title, meta description, and favicon — actual rendering will vary by platform.';
-  return preview;
 }
 
 // ===================== AI INSIGHTS =====================
@@ -716,17 +786,17 @@ function renderOgTab(data) {
 // scorlyComputeAiInsights) — "AI" refers to the audience (AI answer
 // engines), not the method. No model, no network.
 function renderInsightsTab(data, scoreResult, insights) {
+  el('insightsContent').innerHTML = insightsTabHtml(data, scoreResult, insights);
+}
+
+// opts.idPrefix: prepended to the panel anchors (and the breakdown bars that
+// scroll to them), so two copies can share a page — compare's side-by-side.
+function insightsTabHtml(data, scoreResult, insights, opts) {
+  const idp = (opts && opts.idPrefix) || '';
   const vis = insights.aiVisibility != null ? insights.aiVisibility : (scoreResult && scoreResult.aiVisibility) || 0;
 
   let html = `<div class="score-row compact">
-    <div class="score-circle-wrap small">
-      <svg viewBox="0 0 120 120" class="score-circle">
-        <circle cx="60" cy="60" r="52" class="score-bg" />
-        <circle cx="60" cy="60" r="52" class="score-fg" style="stroke:${scoreColor(vis)};stroke-dashoffset:${326.7 - (326.7 * vis) / 100}"/>
-      </svg>
-      <div class="score-number" style="color:${scoreColor(vis)}">${vis}</div>
-      <div class="score-caption">AI<br>VISIBILITY</div>
-    </div>
+    ${scoreRingHtml(vis, 'AI<br>VISIBILITY', true)}
     <div class="insight-vis-blurb">
       <p>How visible this page can be to AI answer engines (ChatGPT, Claude, Perplexity, Gemini): crawler access, machine-readable structure, trust signals and freshness.</p>
     </div>
@@ -745,7 +815,7 @@ function renderInsightsTab(data, scoreResult, insights) {
     html += '<div class="panel-title">What Makes Up This Score</div>';
     html += '<div class="bar-list vis-bars">';
     html += breakdown.components.map((c) => `
-      <button type="button" class="bar-row vis-bar" data-scrollto="${c.section}" title="${escapeHtml(c.detail)} Worth ${c.cap} of the 100 AI Visibility points; this page earns ${c.earned}.">
+      <button type="button" class="bar-row vis-bar" data-scrollto="${idp}${c.section}" title="${escapeHtml(c.detail)} Worth ${c.cap} of the 100 AI Visibility points; this page earns ${c.earned}.">
         <div class="bar-label">${escapeHtml(c.label)}</div>
         <div class="bar-track"><div class="bar-fill" style="width:${Math.max(0, Math.min(100, c.pct))}%;background:${scoreColor(c.pct)}"></div></div>
         <div class="bar-value">${c.pct}%</div>
@@ -756,7 +826,7 @@ function renderInsightsTab(data, scoreResult, insights) {
 
   // ---- AI crawler access ----
   if (data.aiBotAccess) {
-    html += '<div class="panel-title" id="sec-crawlers">AI Crawler Access (robots.txt)</div><div class="bot-grid">';
+    html += '<div class="panel-title" id="' + idp + 'sec-crawlers">AI Crawler Access (robots.txt)</div><div class="bot-grid">';
     html += data.aiBotAccess.map((b) => `
       <div class="bot-row">
         <span class="bot-dot" style="background:var(--${b.allowed ? 'pass' : 'fail'})"></span>
@@ -772,7 +842,7 @@ function renderInsightsTab(data, scoreResult, insights) {
 
   // ---- AI SEO checks (the markup-level checklist this score is built from) ----
   if (scoreResult && scoreResult.categories && scoreResult.categories.aiSeo) {
-    html += '<div class="panel-title" id="sec-aichecks">AI SEO Checks</div>';
+    html += '<div class="panel-title" id="' + idp + 'sec-aichecks">AI SEO Checks</div>';
     html += '<p class="checks-intro">The structural checks behind the AI Visibility score above — structured data, schema, semantic HTML and crawler access.</p>';
     html += renderGroupedChecks(scoreResult.categories.aiSeo);
   }
@@ -781,7 +851,7 @@ function renderInsightsTab(data, scoreResult, insights) {
   // Both of the panels below score the opposite way round to everything else
   // in the popup: a HIGH number is bad. riskColor inverts scoreColor so the
   // colour still means what the user expects (red = problem).
-  html += '<div class="panel-title" id="sec-aicopy">AI Copy Signals</div>';
+  html += '<div class="panel-title" id="' + idp + 'sec-aicopy">AI Copy Signals</div>';
   if (!insights.aiCopy) {
     html += '<p class="empty-note">Captured on newer analyses — hit re-analyze to populate this section.</p>';
   } else if (!insights.aiCopy.available) {
@@ -817,7 +887,7 @@ function renderInsightsTab(data, scoreResult, insights) {
   }
 
   // ---- Vibe-code detection ----
-  html += '<div class="panel-title" id="sec-vibecode">Vibe-Code Detection</div>';
+  html += '<div class="panel-title" id="' + idp + 'sec-vibecode">Vibe-Code Detection</div>';
   if (!insights.vibeCode) {
     html += '<p class="empty-note">Captured on newer analyses — hit re-analyze to populate this section.</p>';
   } else {
@@ -904,7 +974,7 @@ function renderInsightsTab(data, scoreResult, insights) {
   html += '</div>';
 
   // ---- Content trust score ----
-  html += '<div class="panel-title" id="sec-trust">Content Trust Score</div>';
+  html += '<div class="panel-title" id="' + idp + 'sec-trust">Content Trust Score</div>';
   if (insights.trust) {
     const t = insights.trust;
     html += `<div class="trust-row">
@@ -922,7 +992,7 @@ function renderInsightsTab(data, scoreResult, insights) {
   }
 
   // ---- Content freshness ----
-  html += '<div class="panel-title" id="sec-freshness">Content Freshness</div>';
+  html += '<div class="panel-title" id="' + idp + 'sec-freshness">Content Freshness</div>';
   if (insights.freshness) {
     const f = insights.freshness;
     html += `<div class="trust-row"><div class="trust-big" style="color:${scoreColor(f.score)}">${f.score}%</div><div class="fresh-signals">`;
@@ -939,5 +1009,136 @@ function renderInsightsTab(data, scoreResult, insights) {
     ? '<div class="opps">' + insights.opportunities.map((o) => `<div class="opp-item"><span class="opp-bullet">→</span><div>${escapeHtml(o)}</div></div>`).join('') + '</div>'
     : '<p class="empty-note">No obvious quick wins — the fundamentals are covered.</p>';
 
-  el('insightsContent').innerHTML = html;
+  return html;
+}
+
+// ===================== PANEL INTERACTIONS =====================
+// Shared by the popup, the full report and compare's side-by-side view.
+
+// "Ask your AI to fix these": builds a self-contained prompt (page context +
+// the clicked list of findings) and copies it, so the user can paste it
+// straight into any AI assistant. Pure clipboard write — nothing is sent.
+function scorlyBuildAiFixPrompt(kind, checks, data, score) {
+  const lines = [];
+  lines.push('You are helping me fix SEO problems on my website. Below is an automated audit of one page, produced by the Scorly browser extension.');
+  lines.push('');
+  lines.push(`Page URL: ${data.url}`);
+  if (data.title && data.title.text) lines.push(`Page title: ${data.title.text}`);
+  if (score) lines.push(`Current SEO score: ${score.overallScore}/100`);
+  lines.push(`Audited: ${new Date(data.analyzedAt).toLocaleString()}`);
+  lines.push('');
+  lines.push(kind === 'issues'
+    ? `The audit found ${checks.length} failing check(s) on this page:`
+    : `The audit raised ${checks.length} warning(s) on this page (lower severity than hard failures, but worth fixing):`);
+  lines.push('');
+  checks.forEach((c, i) => {
+    const tags = [c.severity ? c.severity.toUpperCase() : null, c.category].filter(Boolean).join(' · ');
+    lines.push(`${i + 1}. ${c.label}${tags ? ` [${tags}]` : ''}`);
+    if (c.detail) lines.push(`   ${c.detail}`);
+  });
+  lines.push('');
+  lines.push('For each item, please:');
+  lines.push('1. Explain briefly why it matters.');
+  lines.push('2. Give me the exact fix — the HTML/code/config to add or change.');
+  lines.push('3. Start with the highest-impact items.');
+  lines.push('');
+  lines.push('If you need to know my stack (CMS, framework, hosting) to give exact steps, ask me that first.');
+  return lines.join('\n');
+}
+
+function scorlyCopyText(text) {
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    return navigator.clipboard.writeText(text);
+  }
+  // Fallback for contexts where the async clipboard API is unavailable.
+  return new Promise((resolve, reject) => {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.position = 'fixed';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    const ok = document.execCommand('copy');
+    ta.remove();
+    ok ? resolve() : reject(new Error('copy failed'));
+  });
+}
+
+// Delegated on the document because panel markup is rebuilt on every render.
+// pageFor(element) returns { data, score } for the page that element belongs
+// to (compare has two), or null.
+function scorlyInitPanelInteractions(pageFor) {
+  document.addEventListener('click', async (e) => {
+    const btn = e.target.closest('.ai-fix-btn');
+    if (btn) {
+      const page = pageFor(btn);
+      if (!page) return;
+      let checks;
+      try { checks = JSON.parse(btn.dataset.aifix); } catch (err) { return; }
+      const original = btn.innerHTML;
+      try {
+        await scorlyCopyText(scorlyBuildAiFixPrompt(btn.dataset.aifixKind, checks, page.data, page.score));
+        btn.innerHTML = 'Prompt copied ✓ — paste it into your AI assistant';
+      } catch (err) {
+        btn.innerHTML = 'Copy failed';
+      }
+      btn.disabled = true;
+      setTimeout(() => { btn.innerHTML = original; btn.disabled = false; }, 2200);
+      return;
+    }
+
+    // The AI Visibility breakdown bars double as the AI Insights tab's table
+    // of contents: each one scrolls to the panel that explains it.
+    const bar = e.target.closest('[data-scrollto]');
+    if (!bar) return;
+    const target = document.getElementById(bar.dataset.scrollto);
+    if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  });
+}
+
+// ===================== WHOLE-PAGE PANELS =====================
+// Every popup tab, as { id, label, html } in tab order, for the full-report
+// and compare views (which lay them out wide instead of behind tabs).
+// opts.idPrefix keeps anchors unique when two pages share one document;
+// opts.imageLimit lifts the popup's 60-image cap.
+const SCORLY_OG_PLATFORMS = [
+  ['facebook', 'Facebook'], ['x', 'X'], ['linkedin', 'LinkedIn'], ['whatsapp', 'WhatsApp'], ['discord', 'Discord / Slack'],
+];
+
+function scorlyPagePanels(data, score, opts) {
+  const o = opts || {};
+  const idp = o.idPrefix || '';
+  const insights = scorlyComputeAiInsights(data, score);
+  const ogPreview = getOgPreviewData(data);
+  const tabs = [
+    ['overview', 'Overview', () => `
+      <div class="panel"><div class="panel-title">SERP Preview</div><div class="serp-preview">${serpPreviewHtml(data)}</div></div>
+      <div class="panel"><div class="panel-title">Quick Stats</div><div class="stat-grid">${statGridHtml(data)}</div></div>
+      <div class="panel"><div class="panel-title">All Checks</div>${renderGroupedChecks(score.allChecks, { showCategory: true, idPrefix: idp + 'overview' })}</div>`],
+    ['insights', 'AI Insights', () => insightsTabHtml(data, score, insights, { idPrefix: idp })],
+    ['meta', 'Meta', () => metaTabHtml(data)],
+    ['content', 'Content', () => contentTabHtml(data, score)],
+    ['headings', 'H Tags', () => headingsTabHtml(data, score)],
+    ['links', 'Links', () => linksTabHtml(data)],
+    ['internal', 'Internal links', () => linkListHtml(data.links.internalList || [], 'No internal links found.')],
+    ['external', 'External links', () => linkListHtml(data.links.externalList || [], 'No external links found.')],
+    ['images', 'Images', () => imagesTabHtml(data, { limit: o.imageLimit })],
+    ['schema', 'Schema', () => schemaTabHtml(data, score)],
+    ['tech', 'Tech', () => techTabHtml(data, score)],
+    ['perf', 'Performance', () => perfTabHtml(data, score)],
+    ['security', 'Security', () => securityTabHtml(data, score)],
+    ['a11y', 'Accessibility', () => a11yTabHtml(data, score)],
+    ['og', 'Open Graph', () => `<div class="og-note">${escapeHtml(ogSourceText(ogPreview))}</div>
+      <div class="og-grid">${SCORLY_OG_PLATFORMS.map(([key, label]) =>
+        `<div class="og-cell"><div class="panel-title">${label}</div>${ogCardHtml(key, ogPreview)}</div>`).join('')}</div>`],
+  ];
+  return tabs.map(([id, label, build]) => {
+    let html;
+    // The popup only ever renders a fresh analysis; these views also render
+    // saved snapshots, where an old capture can lack a field a tab expects.
+    try { html = build(); } catch (err) {
+      html = '<p class="empty-note">Not available for this snapshot — re-analyze the page to populate it.</p>';
+    }
+    return { id, label, html };
+  });
 }

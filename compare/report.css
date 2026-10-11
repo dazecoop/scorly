@@ -1,0 +1,116 @@
+/* Full-report view. Builds on compare.css (top bar, sections, rows, export
+   menu); only the single-page pieces live here. */
+
+/* ---------------- Screenshot banner ---------------- */
+/* Full window width, cropped to the top of the captured viewport and faded
+   into the background; the score card then overlaps its lower half. */
+
+.rhero {
+  position: relative;
+  height: 380px;
+  overflow: hidden;
+  background: var(--bg);
+}
+.rhero[data-state="none"] { display: none; }
+.rhero-img {
+  display: block;
+  width: 100%;
+  max-width: 1600px;
+  /* Stops short of the banner's edge: the sticky bar above can leave that
+     edge on a half pixel, and anti-aliasing there let a bright line of
+     screenshot bleed through under the fade (very visible in dark mode). */
+  height: calc(100% - 2px);
+  margin: 0 auto;
+  object-fit: cover;
+  object-position: top center;
+  opacity: 0;
+  transition: opacity 0.4s ease;
+}
+.rhero[data-state="ready"] .rhero-img { opacity: 1; }
+.rhero-fade {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(to bottom, transparent 20%, var(--bg) 92%);
+  background: linear-gradient(to bottom,
+    transparent 10%,
+    color-mix(in srgb, var(--bg) 30%, transparent) 38%,
+    color-mix(in srgb, var(--bg) 72%, transparent) 62%,
+    var(--bg) 90%);
+  pointer-events: none;
+}
+
+.rwrap { position: relative; }
+.has-hero .rwrap { margin-top: -190px; }
+
+/* ---------------- Score card ----------------
+   Ring, bars and count tiles are the popup's own components (panels.css,
+   scaled by .pp); this only arranges them across the width. */
+
+.rcard {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) minmax(240px, 320px);
+  gap: 22px;
+  align-items: center;
+  padding: 18px 20px;
+  margin-bottom: 8px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  box-shadow: 0 18px 44px rgba(0, 0, 0, 0.12);
+}
+@media (max-width: 900px) {
+  .rcard { grid-template-columns: auto minmax(0, 1fr); }
+  .rcard .score-bars { grid-column: 1 / -1; }
+}
+@media (max-width: 560px) {
+  .rcard { grid-template-columns: 1fr; justify-items: start; }
+}
+.rcard .count-row { margin: 12px 0 0; max-width: 420px; }
+
+.rtitle { font-size: 18px; line-height: 1.3; margin: 0 0 3px; overflow-wrap: anywhere; }
+.rurl { color: var(--accent); text-decoration: none; font-size: 12px; overflow-wrap: anywhere; }
+.rurl:hover { text-decoration: underline; }
+.rcard .side-meta { font-size: 11.5px; }
+
+/* ---------------- Sections ---------------- */
+
+#panelHost .sec-body { padding: 14px 16px 6px; }
+.jump a.jump-raw { border-style: dashed; }
+
+/* The raw-fields appendix: one fold holding compare's field sections. */
+.fields-wrap { margin: 26px 0 40px; scroll-margin-top: 120px; }
+.fields-wrap > summary {
+  cursor: pointer; list-style: none;
+  display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap;
+  padding: 12px 0; margin-bottom: 8px;
+  font-weight: 800; font-size: 17px;
+  border-bottom: 1px solid var(--border);
+}
+.fields-wrap > summary::-webkit-details-marker { display: none; }
+.fields-wrap > summary::before { content: '▸'; color: var(--text-muted); }
+.fields-wrap[open] > summary::before { content: '▾'; }
+.fields-sub { font-weight: 400; font-size: 13.5px; color: var(--text-muted); }
+
+/* ---------------- Raw field rows (single value) ---------------- */
+
+.rcell { background: var(--surface-2); border-left: 3px solid var(--accent); border-radius: 8px; padding: 8px 10px; overflow-wrap: anywhere; }
+.rcell .missing { color: var(--text-muted); font-style: italic; }
+
+.rnum { display: grid; grid-template-columns: 1fr auto; gap: 12px; align-items: baseline; padding: 7px 0; border-top: 1px solid var(--border); }
+.rnum:first-child { border-top: none; }
+.rnum .nlabel { font-weight: 600; }
+.rnum-note { color: var(--text-muted); font-size: 13.5px; font-weight: 400; margin-left: 8px; }
+.rnum .nval { font-variant-numeric: tabular-nums; font-weight: 700; text-align: right; }
+
+.seq.rlist { background: var(--surface-2); padding: 4px 0; }
+.seq.rlist .seq-line { color: var(--text); }
+.seq-line.pre { white-space: pre-wrap; }
+.set-list.rlist li { background: var(--surface-2); }
+.set-list.rlist li .sval { margin-left: auto; text-align: right; }
+
+.rmissing { padding: 40px 0; }
+
+@media print {
+  .cbar, .jump { display: none; }
+  .has-hero .rwrap { margin-top: -120px; }
+}

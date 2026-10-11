@@ -206,13 +206,13 @@ async function main() {
     const rowsWithFilterOff = await cmp.evaluate(() => {
       document.getElementById('diffOnly').checked = false;
       document.getElementById('diffOnly').dispatchEvent(new Event('change'));
-      return document.querySelectorAll('#sectionHost .row, #sectionHost .check-row').length;
+      return document.querySelectorAll('#sectionHost .row, #sectionHost .vcheck-row').length;
     });
     await new Promise((r) => setTimeout(r, 400));
     const rowsWithFilterOn = await cmp.evaluate(() => {
       document.getElementById('diffOnly').checked = true;
       document.getElementById('diffOnly').dispatchEvent(new Event('change'));
-      return document.querySelectorAll('#sectionHost .row, #sectionHost .check-row').length;
+      return document.querySelectorAll('#sectionHost .row, #sectionHost .vcheck-row').length;
     });
     check('"only differences" hides identical rows', rowsWithFilterOn < rowsWithFilterOff,
       `${rowsWithFilterOn} of ${rowsWithFilterOff} rows`);

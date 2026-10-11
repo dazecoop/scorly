@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Scorly · Report</title>
+<link rel="stylesheet" href="../popup/theme.css" />
+<link rel="stylesheet" href="../popup/panels.css" />
+<link rel="stylesheet" href="compare.css" />
+<link rel="stylesheet" href="report.css" />
+</head>
+<body>
+
+<header class="cbar">
+  <div class="cbar-brand">
+    <img src="../icons/icon32.png" alt="" width="22" height="22" />
+    <span>Scorly</span>
+    <span class="cbar-sep">·</span>
+    <span class="cbar-title">Report</span>
+  </div>
+
+  <div class="cbar-actions">
+    <input type="search" id="filterInput" class="filter-input" placeholder="Filter fields…" />
+    <button id="compareBtn" class="btn btn-ghost" title="Compare this page against another snapshot or URL">Compare &#8599;</button>
+    <div class="export-wrap" id="exportWrap">
+      <button id="exportBtn" class="btn btn-ghost" aria-haspopup="menu" aria-expanded="false">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+        Export
+        <svg class="caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+      </button>
+
+      <div class="export-pop hidden" id="exportPop" role="menu">
+        <button role="menuitem" data-export="pdf">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="8" y1="13" x2="14" y2="13"/><line x1="8" y1="17" x2="16" y2="17"/></svg>
+          PDF
+        </button>
+        <button role="menuitem" data-export="csv">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><line x1="3" y1="10" x2="21" y2="10"/><line x1="9" y1="10" x2="9" y2="20"/><line x1="15" y1="10" x2="15" y2="20"/></svg>
+          CSV
+        </button>
+        <button role="menuitem" data-export="json">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H7a2 2 0 0 0-2 2v4a2 2 0 0 1-2 2 2 2 0 0 1 2 2v4a2 2 0 0 0 2 2h1"/><path d="M16 3h1a2 2 0 0 1 2 2v4a2 2 0 0 0 2 2 2 2 0 0 0-2 2v4a2 2 0 0 1-2 2h-1"/></svg>
+          JSON
+        </button>
+        <button role="menuitem" data-export="md">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="5" width="20" height="14" rx="2"/><polyline points="6 15 6 9 9 12 12 9 12 15"/><polyline points="16 9 16 14"/><polyline points="14.5 12.5 16 15 17.5 12.5"/></svg>
+          Markdown
+        </button>
+      </div>
+    </div>
+    <button id="themeBtn" class="icon-btn" title="Toggle theme">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+    </button>
+  </div>
+</header>
+
+<!-- Page screenshot from the popup, faded into the background so the score
+     card reads as sitting on top of the page. Never uploaded anywhere. -->
+<div class="rhero" id="hero" data-state="none" aria-hidden="true">
+  <img class="rhero-img" id="heroImg" alt="" />
+  <div class="rhero-fade"></div>
+</div>
+
+<main class="wrap rwrap">
+
+  <section id="reportPane" class="hidden">
+    <!-- Popup components (panels.css), so the header reads exactly like the
+         popup's Overview, one size up. -->
+    <div class="rcard pp">
+      <div id="scoreRing"></div>
+      <div class="rcard-main">
+        <h1 class="rtitle" id="pageTitle"></h1>
+        <a class="rurl" id="pageUrl" target="_blank" rel="noopener"></a>
+        <div class="side-meta" id="pageMeta"></div>
+        <div class="count-row" id="countRow">
+          <button class="count-tile fail" data-target="group-fail" title="Jump to issues"><div class="count-num" id="issuesCount">0</div><div class="count-txt">Issues</div></button>
+          <button class="count-tile warn" data-target="group-warn" title="Jump to warnings"><div class="count-num" id="warningsCount">0</div><div class="count-txt">Warnings</div></button>
+          <button class="count-tile pass" data-target="group-pass" title="Jump to passed checks"><div class="count-num" id="passedCount">0</div><div class="count-txt">Passed</div></button>
+        </div>
+      </div>
+      <div class="score-bars" id="scoreBars"></div>
+    </div>
+
+    <nav class="jump" id="jumpNav"></nav>
+
+    <div id="panelHost"></div>
+
+    <details class="fields-wrap" id="fieldsWrap">
+      <summary>
+        <span>All captured fields</span>
+        <span class="fields-sub">Every raw value Scorly recorded for this page — the same fields the compare view diffs</span>
+      </summary>
+      <div id="fieldHost"></div>
+    </details>
+  </section>
+
+  <section id="missingPane" class="rmissing hidden">
+    <h1 class="setup-h">Report not available</h1>
+    <p class="setup-p">
+      This report's snapshot is no longer stored on this machine — snapshots
+      rotate out as new ones are saved. Open Scorly on the page again and
+      press “Full report”.
+    </p>
+  </section>
+
+  <div id="busyPane" class="busy">
+    <div class="spinner"></div>
+    <p>Loading report…</p>
+  </div>
+
+</main>
+
+<script src="../popup/vendor/jspdf.umd.min.js"></script>
+<script src="../popup/snapshots.js"></script>
+<script src="../popup/scoring.js"></script>
+<script src="../popup/render.js"></script>
+<script src="../popup/export.js"></script>
+<script src="diff.js"></script>
+<script src="page-chrome.js"></script>
+<script src="report.js"></script>
+</body>
+</html>

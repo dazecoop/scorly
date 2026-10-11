@@ -54,6 +54,12 @@ html, body { height: 600px; }
 }
 .icon-btn:hover { background: var(--accent-soft); color: var(--accent); }
 .icon-btn svg { width: 16px; height: 16px; }
+/* AI-agent bridge status: no dot when off, pulsing amber while waiting for
+   an agent, accent while connected. */
+.agent-btn { position: relative; }
+.agent-dot { position: absolute; top: 5px; right: 5px; width: 7px; height: 7px; border-radius: 50%; border: 1.5px solid var(--surface); display: none; }
+.agent-btn[data-state="waiting"] .agent-dot { display: block; background: var(--warn); }
+.agent-btn[data-state="connected"] .agent-dot { display: block; background: var(--accent); }
 .hidden { display: none !important; }
 
 .state-pane {

@@ -384,6 +384,45 @@ function initCompare() {
   refreshSnapCount();
 }
 
+// ---- AI-agent bridge (settings/agent.html) ----
+// The topbar button opens the agent settings; its dot mirrors the status
+// record the background worker keeps.
+function initAgentButton() {
+  // Passes the analyzed page along so the settings page can prefill the
+  // URL in its "Ask your agent" prompt.
+  const open = async (e) => {
+    e.preventDefault();
+    const page = lastData && /^https?:/i.test(lastData.url) ? '?url=' + encodeURIComponent(lastData.url) : '';
+    await browserApi.tabs.create({ url: browserApi.runtime.getURL('settings/agent.html') + page });
+    window.close();
+  };
+  el('agentBtn').addEventListener('click', open);
+  el('aboutAgentRow').addEventListener('click', open);
+
+  const LABEL = { off: 'off', waiting: 'on, waiting for an agent', connected: 'connected' };
+  const paint = (settings, status) => {
+    const state = !(settings && settings.enabled) ? 'off' : (status && status.state === 'connected' ? 'connected' : 'waiting');
+    el('agentBtn').dataset.state = state;
+    el('agentBtn').title = 'AI agents (MCP / CLI): ' + LABEL[state];
+    if (state === 'connected' && status.agents && status.agents.length) {
+      el('aboutAgentSub').textContent = 'Connected: ' + status.agents.join(', ');
+    }
+  };
+  browserApi.storage.local.get(['scorly-agent-settings', 'scorly-agent-status']).then((s) => {
+    paint(s['scorly-agent-settings'], s['scorly-agent-status']);
+    // Opening the popup is a good moment to retry instead of waiting for
+    // the background worker's next 30-second alarm.
+    if (s['scorly-agent-settings'] && s['scorly-agent-settings'].enabled) {
+      browserApi.runtime.sendMessage({ type: 'scorly-agent-reconnect' }).catch(() => {});
+    }
+  });
+  browserApi.storage.onChanged.addListener((changes, area) => {
+    if (area !== 'local' || !(changes['scorly-agent-status'] || changes['scorly-agent-settings'])) return;
+    browserApi.storage.local.get(['scorly-agent-settings', 'scorly-agent-status'])
+      .then((s) => paint(s['scorly-agent-settings'], s['scorly-agent-status']));
+  });
+}
+
 document.addEventListener('DOMContentLoaded', () => {
   // Version read from the manifest at runtime, so the About tab can't drift
   // from what is actually installed.
@@ -395,6 +434,7 @@ document.addEventListener('DOMContentLoaded', () => {
   initExportButtons();
   initTheme();
   initCompare();
+  initAgentButton();
   el('refreshBtn').addEventListener('click', analyzeActiveTab);
   analyzeActiveTab();
 });

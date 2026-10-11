@@ -57,6 +57,37 @@ never loads a page you did not ask it to.
 No request is ever made to a Scorly-owned or third-party server. There is no
 telemetry, crash reporting, or usage tracking of any kind.
 
+## AI agent access (off by default)
+
+Scorly can be used by an AI coding agent on your computer (Claude Code,
+Cursor and others) through Scorly's own MCP server / command-line tool. That
+tool runs locally, on your machine, and is something you install yourself.
+
+If you turn on **Let AI agents use Scorly** in the extension's settings, the
+extension opens one WebSocket connection to `127.0.0.1` (your own computer,
+port 47615 unless you change it), where only that tool listens. When the
+agent asks for an audit, Scorly loads the URL in a background tab, runs the
+same analysis the popup runs, closes the tab and passes the result back over
+that local connection. Requests made while loading the page are the same
+ones listed under *Network requests* below.
+
+- The connection never leaves your computer, and no Scorly-owned or
+  third-party server is involved.
+- Pages are loaded with this browser's cookies, so an agent can audit pages
+  you are signed in to. If you don't want that, leave the switch off (audits
+  then run in a separate headless browser with no logins), or tick **Only
+  allow localhost URLs**.
+- While the switch is on, the extension retries the connection every 30
+  seconds, and stores the connection status and the URL of the last audit in
+  local extension storage so the settings page can show it. Turning the
+  switch off closes the connection and removes that status record.
+- Scorly also remembers the names of agent apps that have connected (for
+  example "claude-code") and when they last did, so the settings page can
+  tell you setup is done. It stays in local extension storage and is removed
+  when you uninstall Scorly.
+- What the agent does with an audit, including whether its AI provider sees
+  the report, is up to the agent you use, not Scorly.
+
 ## "AI" features do not use AI
 
 Scorly has an AI Insights tab, an AI Visibility score, an AI-copy detector
@@ -77,13 +108,16 @@ detector output is shared or retained beyond the popup you are looking at.
 
 - **activeTab / scripting** — used to read and analyze the tab you have open
   when you click the icon, and the background tab the compare view opens for
-  a URL you typed. Scorly never runs on a schedule and never reads a page you
-  did not point it at.
+  a URL you typed, or that a local AI agent asked for while you have agent
+  access switched on. Scorly never reads a page that you, or an agent you
+  connected, did not point it at.
 - **tabs** — used to identify which tab is active, so the popup knows what
   to analyze, and to open and close the background tab when you ask the
   compare view to load a specific URL.
-- **storage** — used only to hold the comparison snapshots you explicitly
-  save, in local (not synced) extension storage.
+- **storage** — used to hold the comparison snapshots you explicitly save,
+  and your AI-agent settings, in local (not synced) extension storage.
+- **alarms** — used only while AI agent access is switched on, to retry the
+  local connection every 30 seconds.
 - **host permissions (`<all_urls>`)** — needed because Scorly can analyze
   any site you're on, including `localhost` and private-network addresses.
   It is never used to read or modify pages you aren't actively inspecting.

@@ -41,6 +41,45 @@ Snapshots live in local extension storage, are capped at 8, and can be
 deleted at any time. Nothing is uploaded, and nothing is stored unless you
 press Save.
 
+### Let your AI agent audit, fix and re-audit
+
+Scorly also runs as an **MCP server and CLI**, so a coding agent (Claude
+Code, Cursor, Claude Desktop, VS Code) can audit a page, fix what it finds in
+your codebase, then re-audit and report how the score moved:
+
+```
+npx -y github:dazecoop/scorly install claude-code      # or claude-desktop, cursor, vscode
+npx -y github:dazecoop/scorly uninstall claude-code    # or all
+npx -y github:dazecoop/scorly status                   # which apps have it, and does it start?
+```
+
+`install` writes absolute Node paths into the app's config (desktop apps
+don't get your shell's PATH, so a bare `npx` fails for nvm/Homebrew
+installs), then starts the server once the way the app will and ends with
+✔ Verified or ✘ and the reason. `uninstall` re-reads the config to confirm
+the entry is gone.
+
+> "Use the Scorly MCP tool scorly_audit to audit http://localhost:3000, fix
+> the issues you can, then re-audit and tell me what improved."
+
+The agent gets `scorly_audit` (scores plus every failing check and warning,
+with the reason), `scorly_compare` (the same diff engine as the Compare view)
+and `scorly_status`. The audit and scoring code is the extension's own, loaded
+unchanged, so the agent sees the same verdicts the popup does.
+
+Audits run in a headless Chrome by default. Turn on **Let AI agents use
+Scorly** in the extension (robot icon in the popup, or the extension's
+options page) and they run in your own browser instead, with your logins, so
+pages behind sign-in work too. The extension then connects to a socket on
+`127.0.0.1` that only Scorly's agent tool listens on. It's off by default,
+can be limited to localhost URLs, and the options page shows live status and
+setup steps for each agent. Without MCP:
+
+```
+npx -y github:dazecoop/scorly audit http://localhost:3000 --save before.json
+npx -y github:dazecoop/scorly audit http://localhost:3000 --compare before.json
+```
+
 ---
 
 ## What it does
@@ -175,7 +214,9 @@ toggle.
 - **No content script runs on every page load.** Analysis happens on demand
   (`chrome.scripting.executeScript`) only when you open the popup, so there's
   no background overhead and no always-on access to pages you're not
-  inspecting.
+  inspecting. The background worker only does anything while **Let AI agents
+  use Scorly** is on, and then only audits the URLs an agent on this computer
+  asks for.
 - `robots.txt`, `sitemap.xml` and `llms.txt` are checked with same-origin
   `fetch()` calls made from the popup, to the site you're already looking at.
 - **The page's own URL is requested once more**, because an extension cannot
@@ -226,6 +267,16 @@ compare/
   diff.js              Pure diff engine: two snapshots in, a renderable comparison model out
   compare.js           Compare-view controller and renderers
   export-diff.js       PDF / CSV / JSON / Markdown export of a comparison
+background/
+  agent-bridge.js      Opt-in link to a local AI agent: runs audits it requests in a background tab
+settings/
+  agent.html/.js/.css  AI-agent settings: on/off switch, live status, per-agent setup steps
+agent/                 Node side (MCP server + CLI), not shipped in the extension
+  cli.js               `scorly audit | compare | status | mcp`
+  mcp.js               MCP server over stdio: scorly_audit, scorly_compare, scorly_status
+  engine.js            Loads the extension's own scripts into a vm; headless capture via Puppeteer
+  bridge.js            ws://127.0.0.1 hub the extension connects to, shared by every agent process
+  run.js               Picks the extension or headless Chrome for each audit
 icons/
 ```
 
@@ -234,6 +285,7 @@ Build and test:
 ```
 npm run build            # dist/chrome + dist/firefox, zipped and unpacked
 npm test                 # end-to-end compare checks, driven in real Chrome
+npm run test:agent       # end-to-end agent bridge checks (switch, status, audits)
 npm run store-assets     # regenerate the store screenshots in store-assets/
 ```
 

@@ -25,7 +25,7 @@ const ZIP_NAME = `scorly-${BROWSER}-v${manifest.version}.zip`;
 const ZIP_PATH = path.join(DIST_ROOT, ZIP_NAME);
 
 // Files/dirs copied verbatim into the package root.
-const INCLUDE = ['manifest.json', 'icons', 'popup', 'compare'];
+const INCLUDE = ['manifest.json', 'icons', 'popup', 'compare', 'background', 'settings'];
 
 function copyRecursive(src, dest) {
   const stat = fs.statSync(src);

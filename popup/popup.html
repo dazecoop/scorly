@@ -17,6 +17,10 @@
       <span id="scoreChip" class="score-chip">--</span>
     </div>
     <div class="topbar-actions">
+      <button id="agentBtn" class="icon-btn agent-btn" title="AI agents (MCP / CLI): off" data-state="off">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="8" width="16" height="12" rx="2"/><path d="M12 8V4"/><circle cx="12" cy="3" r="1"/><line x1="9" y1="13" x2="9" y2="15"/><line x1="15" y1="13" x2="15" y2="15"/></svg>
+        <span class="agent-dot"></span>
+      </button>
       <button id="themeBtn" class="icon-btn" title="Toggle theme">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
       </button>
@@ -230,6 +234,10 @@
         <a class="about-row" href="https://github.com/dazecoop/scorly" target="_blank" rel="noopener">
           <svg class="tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 0 0-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0 0 20 4.77 5.07 5.07 0 0 0 19.91 1S18.73.65 16 2.48a13.38 13.38 0 0 0-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 0 0 5 4.77a5.44 5.44 0 0 0-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 0 0 9 18.13V22"/></svg>
           <div><div class="about-row-title">GitHub repository</div><div class="about-row-sub">github.com/dazecoop/scorly</div></div>
+        </a>
+        <a class="about-row" href="#" id="aboutAgentRow">
+          <svg class="tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="8" width="16" height="12" rx="2"/><path d="M12 8V4"/><circle cx="12" cy="3" r="1"/><line x1="9" y1="13" x2="9" y2="15"/><line x1="15" y1="13" x2="15" y2="15"/></svg>
+          <div><div class="about-row-title">AI agents (MCP / CLI)</div><div class="about-row-sub" id="aboutAgentSub">Let Claude Code, Cursor &amp; co. audit and fix pages</div></div>
         </a>
         <a class="about-row" href="https://github.com/dazecoop/scorly/blob/main/PRIVACY.md" target="_blank" rel="noopener">
           <svg class="tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>

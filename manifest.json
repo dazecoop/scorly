@@ -19,14 +19,36 @@
     },
     "default_title": "Scorly"
   },
-  "permissions": ["activeTab", "scripting", "tabs", "storage"],
-  "host_permissions": ["<all_urls>"],
+  "background": {
+    "service_worker": "background/agent-bridge.js",
+    "scripts": [
+      "popup/inpage-analyzer.js",
+      "popup/analyze.js",
+      "background/agent-bridge.js"
+    ]
+  },
+  "options_ui": {
+    "page": "settings/agent.html",
+    "open_in_tab": true
+  },
+  "permissions": [
+    "activeTab",
+    "scripting",
+    "tabs",
+    "storage",
+    "alarms"
+  ],
+  "host_permissions": [
+    "<all_urls>"
+  ],
   "browser_specific_settings": {
     "gecko": {
       "id": "scorly@extensions.local",
       "strict_min_version": "109.0",
       "data_collection_permissions": {
-        "required": ["none"]
+        "required": [
+          "none"
+        ]
       }
     }
   }

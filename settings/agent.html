@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Scorly · AI agents</title>
+<link rel="stylesheet" href="../popup/theme.css" />
+<link rel="stylesheet" href="../compare/compare.css" />
+<link rel="stylesheet" href="agent.css" />
+</head>
+<body>
+
+<header class="cbar">
+  <div class="cbar-brand">
+    <img src="../icons/icon32.png" alt="" width="22" height="22" />
+    <span>Scorly</span>
+    <span class="cbar-sep">·</span>
+    <span class="cbar-title">AI agents (MCP / CLI)</span>
+  </div>
+  <div class="cbar-actions">
+    <button id="themeBtn" class="icon-btn" title="Toggle theme">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+    </button>
+  </div>
+</header>
+
+<main class="ag-wrap">
+
+  <section class="ag-card ag-main">
+    <div class="ag-main-row">
+      <div>
+        <h1 class="ag-h1">Let AI agents use Scorly</h1>
+        <p class="ag-sub">Your coding agent (Claude Code, Cursor, …) audits a page, fixes what Scorly finds in your code, then re-audits to show what improved.</p>
+      </div>
+      <label class="ag-switch" title="Allow agents on this computer to run audits in this browser">
+        <input type="checkbox" id="enabledToggle" />
+        <span class="ag-switch-track"><span class="ag-switch-thumb"></span></span>
+        <span class="sr-only">Let AI agents use Scorly in this browser</span>
+      </label>
+    </div>
+
+    <div class="ag-status" id="statusBox" data-state="off">
+      <span class="ag-dot"></span>
+      <div class="ag-status-text">
+        <div class="ag-status-title" id="statusTitle">Off</div>
+        <div class="ag-status-sub" id="statusSub"></div>
+      </div>
+      <button class="btn btn-ghost ag-reconnect hidden" id="reconnectBtn">Retry now</button>
+    </div>
+
+    <div class="ag-last hidden" id="lastAudit"></div>
+  </section>
+
+  <!-- Setup: full instructions until an agent has connected once, then a
+       one-line confirmation with the instructions folded away. -->
+  <section class="ag-card" id="setupCard">
+    <div id="setupDetected" class="ag-detected hidden">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+      <div>
+        <div class="ag-detected-title" id="detectedTitle">Scorly is set up</div>
+        <div class="ag-detected-sub" id="detectedSub"></div>
+      </div>
+    </div>
+
+    <div id="setupNeeded">
+      <h2 class="ag-h2"><span class="ag-step" data-step></span> Add Scorly to your agent</h2>
+      <p class="ag-p ag-hint" id="setupHint"></p>
+    </div>
+
+    <details class="ag-fold" id="setupFold" open>
+      <summary id="setupSummary">Setup instructions</summary>
+      <p class="ag-p">Pick your agent and run its command once. It needs <a href="https://nodejs.org" target="_blank" rel="noopener">Node.js 18+</a>; nothing else to install.</p>
+      <div class="ag-tabs" role="tablist" id="clientTabs">
+        <button role="tab" class="ag-tab active" data-client="claude-code">Claude Code</button>
+        <button role="tab" class="ag-tab" data-client="claude-desktop">Claude Desktop</button>
+        <button role="tab" class="ag-tab" data-client="cursor">Cursor</button>
+        <button role="tab" class="ag-tab" data-client="vscode">VS Code</button>
+        <button role="tab" class="ag-tab" data-client="cli">Terminal</button>
+      </div>
+      <p class="ag-p ag-where" id="snippetWhere"></p>
+      <div class="ag-code">
+        <pre id="snippet"></pre>
+        <button class="btn btn-ghost ag-copy" data-copy="snippet">Copy</button>
+      </div>
+      <p class="ag-p ag-muted" id="snippetAfter"></p>
+      <details class="ag-remove">
+        <summary>Uninstall</summary>
+        <p class="ag-p ag-muted" id="removeNote"></p>
+        <div class="ag-code">
+          <pre id="removeSnippet"></pre>
+          <button class="btn btn-ghost ag-copy" data-copy="removeSnippet">Copy</button>
+        </div>
+      </details>
+    </details>
+  </section>
+
+  <section class="ag-card">
+    <h2 class="ag-h2"><span class="ag-step" data-step></span> Test it</h2>
+    <p class="ag-p">Start a new session in your agent and paste this. It only checks that the agent can see Scorly; nothing is audited or changed.</p>
+    <div class="ag-code">
+      <pre id="testPrompt">Call the scorly_status tool and reply with exactly what it returns. If you don't have a tool called scorly_status, reply only with: SCORLY NOT INSTALLED</pre>
+      <button class="btn btn-ghost ag-copy" data-copy="testPrompt">Copy</button>
+    </div>
+    <dl class="ag-results">
+      <dt class="ag-res-ok">"Scorly MCP is working … Audits run in the user's browser"</dt>
+      <dd>All set: audits run in this browser. The status at the top of this page also shows Connected.</dd>
+      <dt class="ag-res-ok">"Scorly MCP is working … The Scorly extension is not connected"</dt>
+      <dd>Works, using headless Chrome. To use this browser (and your logins), turn the switch on above, wait up to 30 seconds and test again. If it still says this, check the port under Options matches your agent config.</dd>
+      <dt class="ag-res-bad">"SCORLY NOT INSTALLED"</dt>
+      <dd>The agent didn't load Scorly. Run the setup command again and check it ends with ✔ Verified, then fully quit and reopen the agent app (a new chat isn't enough).</dd>
+    </dl>
+  </section>
+
+  <section class="ag-card">
+    <h2 class="ag-h2"><span class="ag-step" data-step></span> Ask your agent</h2>
+    <div class="ag-fields">
+      <label class="ag-field">
+        <span class="ag-field-label">Page to audit and fix</span>
+        <input type="url" id="auditUrl" class="ag-input" placeholder="http://localhost:3000" spellcheck="false" />
+        <span class="ag-field-sub">Usually your local dev server: the agent edits the code behind it.</span>
+      </label>
+      <label class="ag-field">
+        <span class="ag-field-label">Compare with <span class="ag-optional">(optional)</span></span>
+        <input type="url" id="compareUrl" class="ag-input" placeholder="https://your-live-site.com" spellcheck="false" />
+        <span class="ag-field-sub">For example your live site, so the agent can tell you what differs.</span>
+      </label>
+    </div>
+    <p class="ag-p">Paste this into a new agent session that has your project's code open. In Claude Desktop, attach the folder first with + → Add folder.</p>
+    <div class="ag-code">
+      <pre id="promptExample"></pre>
+      <button class="btn btn-ghost ag-copy" data-copy="promptExample">Copy</button>
+    </div>
+    <p class="ag-p ag-muted">Pages you're signed in to work too: sign in here first and keep the switch above on.</p>
+  </section>
+
+  <details class="ag-card ag-fold-card">
+    <summary>How it works &amp; privacy</summary>
+    <div class="ag-info">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
+      <div>
+        <strong>Still local-only.</strong> With the switch on, Scorly keeps one connection open to
+        <code id="infoAddr">ws://127.0.0.1:47615</code>, on this computer, where only Scorly's agent tool listens.
+        For each audit it opens the URL in a background tab, runs the same analysis as the popup and closes the tab.
+        With the switch off, agents can still use Scorly, but audits run in a separate headless Chrome without your logins.
+      </div>
+    </div>
+    <dl class="ag-tools">
+      <dt><code>scorly_audit</code></dt>
+      <dd>Scores plus every failing check and warning, with the reason. Re-auditing the same URL adds what changed.</dd>
+      <dt><code>scorly_compare</code></dt>
+      <dd>A field-by-field diff of two audits, using the same engine as the Compare view.</dd>
+      <dt><code>scorly_status</code></dt>
+      <dd>Whether audits run in this browser or in headless Chrome.</dd>
+    </dl>
+    <p class="ag-p ag-muted">Some checks depend on hosting, not code (HTTP/2, security headers), so they can't pass on a local dev server. Background-tab audits record no LCP/CLS, so before/after comparisons leave those timings out.</p>
+  </details>
+
+  <details class="ag-card ag-fold-card">
+    <summary>Options</summary>
+    <label class="ag-opt">
+      <input type="checkbox" id="localhostOnly" />
+      <div>
+        <div class="ag-opt-title">Only allow localhost URLs</div>
+        <div class="ag-opt-sub">Agents can only audit dev servers (localhost, 127.0.0.1) in this browser. Other URLs run in headless Chrome, without your logins.</div>
+      </div>
+    </label>
+    <label class="ag-opt">
+      <input type="number" id="portInput" min="1024" max="65535" class="ag-port" />
+      <div>
+        <div class="ag-opt-title">Bridge port</div>
+        <div class="ag-opt-sub">Change only if <code>47615</code> is taken. The setup command then includes the matching <code>SCORLY_PORT</code>.</div>
+      </div>
+    </label>
+  </details>
+
+  <details class="ag-card ag-fold-card">
+    <summary>Troubleshooting</summary>
+    <ul class="ag-list">
+      <li><strong>Stuck on "Waiting for an agent":</strong> no agent session with Scorly is running. Start one; Scorly checks every 30 seconds, or press <em>Retry now</em>.</li>
+      <li><strong>"SCORLY NOT INSTALLED" or setup not detected:</strong> in a terminal, <code>npx -y github:dazecoop/scorly status</code> lists each agent app, whether Scorly is installed there and whether it starts. Detection on this page also needs the switch on and an agent session running.</li>
+      <li><strong>Audits run headless even though the switch is on:</strong> check that the port matches <code>SCORLY_PORT</code> in your agent config, and that <em>Only allow localhost URLs</em> isn't blocking the URL.</li>
+      <li><strong>Headless fails to start:</strong> install Google Chrome, or set <code>SCORLY_CHROME</code> to a Chrome/Chromium binary.</li>
+    </ul>
+  </details>
+
+</main>
+
+<script src="../compare/page-chrome.js"></script>
+<script src="agent.js"></script>
+</body>
+</html>

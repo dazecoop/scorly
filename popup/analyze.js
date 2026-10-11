@@ -91,6 +91,9 @@ function scorlyParseAiBotAccess(robotsText) {
 
 function scorlyCheckFavicon(url) {
   if (!url) return Promise.resolve(false);
+  // No Image() in the agent bridge's service worker or the Node CLI — a
+  // plain request answers the same question there.
+  if (typeof Image === 'undefined') return scorlyFetchOk(url, 2500);
   return new Promise((resolve) => {
     const img = new Image();
     const timer = setTimeout(() => resolve(false), 2500);
@@ -389,7 +392,13 @@ async function scorlyAnalyzeTab(tabId, { onPartial } = {}) {
   if (onPartial) {
     try { onPartial(data); } catch (e) { /* rendering must not kill analysis */ }
   }
+  return scorlyCompleteAnalysis(data);
+}
 
+// The network half of an analysis: everything after the in-page read. Split
+// out so the Node CLI / MCP server (agent/engine.js), which reads the page
+// through Puppeteer instead of executeScript, runs exactly the same checks.
+async function scorlyCompleteAnalysis(data) {
   let origin;
   try { origin = new URL(data.url).origin; } catch (e) { origin = null; }
 

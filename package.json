@@ -12,9 +12,27 @@
     "store-assets:firefox": "node scripts/capture-popup.js firefox && node scripts/capture-compare.js && node scripts/compose-slides.js firefox",
     "store-assets": "npm run store-assets:chrome && npm run store-assets:firefox",
     "test": "node scripts/test-compare.js",
-    "capture:compare": "node scripts/capture-compare.js"
+    "capture:compare": "node scripts/capture-compare.js",
+    "test:agent": "node scripts/test-agent.js"
   },
   "devDependencies": {
     "puppeteer": "^25.12.0"
+  },
+  "bin": {
+    "scorly": "agent/cli.js"
+  },
+  "files": [
+    "agent",
+    "popup",
+    "compare",
+    "package.json",
+    "README.md"
+  ],
+  "dependencies": {
+    "puppeteer-core": "^25.12.0",
+    "ws": "^8.18.0"
+  },
+  "engines": {
+    "node": ">=18"
   }
 }

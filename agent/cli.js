@@ -1,0 +1,144 @@
+#!/usr/bin/env node
+// Scorly command line: audit pages, diff audits, or run the MCP server.
+//
+//   scorly audit <url> [--detail summary|full|json] [--via auto|browser|headless]
+//                      [--save audit.json] [--compare earlier.json]
+//   scorly compare <before.json> <after.json>
+//   scorly status
+//   scorly mcp
+//   scorly install <app> [--local]  ·  scorly uninstall <app|all>
+
+const fs = require('fs');
+const { Bridge, DEFAULT_PORT } = require('./bridge');
+const { runAudit, ENGINE_LABEL } = require('./run');
+const engine = require('./engine');
+const installer = require('./install');
+
+const HELP = `Scorly — local SEO / content / performance audits for AI agents and scripts.
+
+Usage:
+  scorly audit <url> [options]     Audit a page (live site or http://localhost:…)
+    --detail summary|full|json     summary (default): scores, issues, warnings
+    --via auto|browser|headless    auto (default): your browser via the extension
+                                   if connected, otherwise headless Chrome
+    --save <file.json>             Keep the audit to compare against later
+    --compare <file.json>          Show what changed since a saved audit
+  scorly compare <before.json> <after.json>
+  scorly status                    Which agent apps have Scorly, and is the extension connected?
+  scorly mcp                       Run as an MCP server over stdio
+
+  scorly install <app> [--local]   Add Scorly to an agent app and check it starts
+  scorly uninstall <app|all>       Remove it again and check it's gone
+      <app>: claude-code, claude-desktop, cursor, vscode (this project)
+      --local: run this checkout instead of the GitHub copy
+
+Environment:
+  SCORLY_PORT    bridge port (default ${DEFAULT_PORT}; match it in the extension)
+  SCORLY_CHROME  Chrome/Chromium binary for headless audits
+`;
+
+function parseArgs(argv) {
+  const out = { _: [] };
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i];
+    if (a.startsWith('--')) {
+      const [k, v] = a.slice(2).split('=');
+      out[k] = v !== undefined ? v : (argv[i + 1] && !argv[i + 1].startsWith('--') ? argv[++i] : true);
+    } else out._.push(a);
+  }
+  return out;
+}
+
+function loadAudit(file) {
+  const audit = JSON.parse(fs.readFileSync(file, 'utf8'));
+  if (!audit || !audit.data || !audit.url) throw new Error(`${file} is not a saved Scorly audit.`);
+  return audit;
+}
+
+function makeBridge() {
+  return new Bridge({ port: Number(process.env.SCORLY_PORT) || DEFAULT_PORT, client: 'scorly-cli' });
+}
+
+async function main() {
+  const args = parseArgs(process.argv.slice(2));
+  const cmd = args._[0];
+
+  if (cmd === 'mcp') {
+    require('./mcp').serve();
+    return; // stays running
+  }
+
+  if (cmd === 'audit') {
+    const url = args._[1];
+    if (!url) throw new Error('Usage: scorly audit <url>');
+    const bridge = makeBridge();
+    if (args.via !== 'headless') await bridge.start().catch(() => {});
+    const log = (m) => console.error(m + (args.via ? '' : ' (pass --via headless to skip)'));
+    try {
+      const { audit, engine: used, note } = await runAudit(url, { bridge, via: args.via || 'auto', log });
+      const detail = args.detail || 'summary';
+      if (detail === 'json') console.log(JSON.stringify(engine.jsonReport(audit), null, 2));
+      else if (detail === 'full') console.log(engine.fullMarkdown(audit));
+      else console.log(engine.summaryMarkdown(audit, { engine: ENGINE_LABEL[used] }));
+      if (note) console.error(note);
+      if (args.compare) console.log('\n' + engine.deltaMarkdown(loadAudit(args.compare), audit));
+      if (args.save) {
+        fs.writeFileSync(args.save, JSON.stringify(audit));
+        console.error(`Saved audit to ${args.save}`);
+      }
+    } finally {
+      await Promise.allSettled([bridge.close(), engine.closeHeadless()]);
+    }
+    return;
+  }
+
+  if (cmd === 'install' || cmd === 'uninstall') {
+    const done = cmd === 'install'
+      ? await installer.install(args._[1], { local: !!args.local })
+      : await installer.uninstall(args._[1]);
+    if (!done) process.exitCode = 1;
+    return;
+  }
+
+  if (cmd === 'compare') {
+    const [, before, after] = args._;
+    if (!before || !after) throw new Error('Usage: scorly compare <before.json> <after.json>');
+    console.log(engine.diffMarkdown(loadAudit(before), loadAudit(after)));
+    return;
+  }
+
+  if (cmd === 'status') {
+    console.log('Agent apps:');
+    (await installer.checkAll()).forEach((l) => console.log('  ' + l));
+    console.log('');
+    const bridge = makeBridge();
+    try {
+      await bridge.start();
+      // A bridge this command just opened only hears from the extension on
+      // its next retry, so give it one retry interval.
+      if (bridge.mode === 'hub') await bridge.waitForExtension(Number(args.wait) || 35000);
+      const s = await bridge.status();
+      if (s.extension) {
+        console.log(`Extension connected: Scorly ${s.extension.version || ''} in ${s.extension.browser || 'your browser'}` +
+          (s.extension.localhostOnly ? ' (localhost URLs only)' : ''));
+      } else {
+        console.log('Extension not connected — audits will use headless Chrome.');
+        console.log('Turn on "Let AI agents use Scorly" in the extension (Agent settings) to use your browser.');
+      }
+      console.log(`Bridge port ${s.port}; agents: ${s.agents.join(', ')}`);
+    } finally {
+      await bridge.close();
+    }
+    return;
+  }
+
+  process.stdout.write(HELP);
+  if (cmd && cmd !== 'help' && cmd !== '--help') process.exitCode = 1;
+}
+
+main().then(() => {
+  if (process.argv[2] !== 'mcp') process.exit(process.exitCode || 0);
+}).catch((err) => {
+  console.error('scorly: ' + err.message);
+  process.exit(1);
+});

@@ -74,7 +74,6 @@
       <div class="ag-tabs" role="tablist" id="clientTabs">
         <button role="tab" class="ag-tab active" data-client="all">All agent apps</button>
         <button role="tab" class="ag-tab" data-client="vscode">VS Code project</button>
-        <button role="tab" class="ag-tab" data-client="cli">Terminal only</button>
       </div>
       <p class="ag-p ag-where" id="snippetWhere"></p>
       <div class="ag-code">
@@ -111,24 +110,61 @@
   </section>
 
   <section class="ag-card">
-    <h2 class="ag-h2"><span class="ag-step" data-step></span> Ask your agent</h2>
+    <h2 class="ag-h2"><span class="ag-step" data-step></span> How to use</h2>
     <div class="ag-fields">
       <label class="ag-field">
-        <span class="ag-field-label">Page to audit and fix</span>
+        <span class="ag-field-label" id="auditLabel">Page to audit</span>
         <input type="url" id="auditUrl" class="ag-input" placeholder="http://localhost:3000" spellcheck="false" />
-        <span class="ag-field-sub">Usually your local dev server: the agent edits the code behind it.</span>
+        <span class="ag-field-sub" id="auditSub"></span>
       </label>
       <label class="ag-field">
         <span class="ag-field-label">Compare with <span class="ag-optional">(optional)</span></span>
         <input type="url" id="compareUrl" class="ag-input" placeholder="https://your-live-site.com" spellcheck="false" />
-        <span class="ag-field-sub">For example your live site, so the agent can tell you what differs.</span>
+        <span class="ag-field-sub">For example your live site, to see what differs.</span>
       </label>
     </div>
-    <p class="ag-p">Paste this into a new agent session that has your project's code open. In Claude Desktop, attach the folder first with + → Add folder.</p>
-    <div class="ag-code">
-      <pre id="promptExample"></pre>
-      <button class="btn btn-ghost ag-copy" data-copy="promptExample">Copy</button>
+
+    <div class="ag-use-tabs" role="tablist" id="useTabs">
+      <button role="tab" class="ag-tab active" data-use="agent">Ask your agent</button>
+      <span class="ag-or">or</span>
+      <button role="tab" class="ag-tab" data-use="cli">Use the CLI</button>
     </div>
+
+    <div id="useAgent">
+      <label class="ag-fix-row">
+        <span class="ag-switch ag-switch-sm">
+          <input type="checkbox" id="fixToggle" checked />
+          <span class="ag-switch-track"><span class="ag-switch-thumb"></span></span>
+        </span>
+        <span>
+          <span class="ag-field-label">Fix the issues in my code</span>
+          <span class="ag-field-sub" id="fixSub"></span>
+        </span>
+      </label>
+      <div class="ag-field ag-folder" id="codebaseField">
+        <label class="ag-field-label" for="codebasePath">Project folder <span class="ag-optional">(where the site's code is)</span></label>
+        <div class="ag-input-row">
+          <input type="text" id="codebasePath" class="ag-input" placeholder="/Users/you/Sites/my-site" spellcheck="false" autocomplete="off" />
+          <button class="btn btn-ghost" id="chooseFolderBtn" type="button" title="Pick the folder. Browsers only reveal its name, not its full path.">Choose…</button>
+        </div>
+        <span class="ag-field-sub" id="codebaseSub"></span>
+      </div>
+      <p class="ag-p" id="pasteHint"></p>
+      <div class="ag-code">
+        <pre id="promptExample"></pre>
+        <button class="btn btn-ghost ag-copy" data-copy="promptExample">Copy</button>
+      </div>
+    </div>
+
+    <div id="useCli" class="hidden">
+      <p class="ag-p">Run these in a terminal, for scripts, CI, or agents without MCP. Nothing to install first.</p>
+      <div class="ag-code">
+        <pre id="cliSnippet"></pre>
+        <button class="btn btn-ghost ag-copy" data-copy="cliSnippet">Copy</button>
+      </div>
+      <p class="ag-p ag-muted">Add <code>--detail full</code> for the complete report or <code>--detail json</code> for machine-readable output. With the switch above on, audits run in this browser; otherwise in headless Chrome (CI included).</p>
+    </div>
+
     <p class="ag-p ag-muted">Pages you're signed in to work too: sign in here first and keep the switch above on.</p>
   </section>
 

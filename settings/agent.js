@@ -131,7 +131,8 @@ function numberSteps() {
 // (desktop apps don't get the shell's PATH, so a pasted bare "npx" fails for
 // nvm/Homebrew Node), then starts the server once to prove it works.
 // `uninstall` reverses it everywhere and checks. VS Code's config is per
-// project, so it has its own command.
+// project, so it has its own command. (Plain CLI use needs no install; it's
+// under "How to use".)
 function snippetFor(which, port) {
   const prefix = Number(port) !== DEFAULTS.port ? `SCORLY_PORT=${port} ` : '';
   const verified = 'It lists each app it set up with ✔, then ends with ✔ Verified when Scorly starts, or ✘ and the reason. ';
@@ -142,19 +143,6 @@ function snippetFor(which, port) {
       after: verified + 'Then run "MCP: List Servers" in VS Code and start scorly.',
       remove: `npx -y ${PACKAGE} uninstall vscode`,
       removeNote: 'To remove Scorly from this project, run this in the project folder. It confirms the entry is gone:',
-    };
-  }
-  if (which === 'cli') {
-    return {
-      where: 'No MCP? Run audits from a terminal or script instead:',
-      code: [
-        `${prefix}npx -y ${PACKAGE} audit http://localhost:3000 --save before.json`,
-        '# …make changes…',
-        `${prefix}npx -y ${PACKAGE} audit http://localhost:3000 --compare before.json`,
-      ].join('\n'),
-      after: 'Add --detail full for the complete report. Works in CI too (headless Chrome).',
-      remove: `npx -y ${PACKAGE} uninstall`,
-      removeNote: 'Nothing to remove for terminal use. This removes Scorly from every agent app it was added to:',
     };
   }
   return {
@@ -173,7 +161,7 @@ function renderSnippet() {
   $('snippetAfter').textContent = s.after;
   $('removeNote').textContent = s.removeNote || 'To remove Scorly again, run this. It confirms the entry is gone:';
   $('removeSnippet').textContent = s.remove;
-  document.querySelectorAll('.ag-tab').forEach((t) => {
+  document.querySelectorAll('#clientTabs .ag-tab').forEach((t) => {
     const on = t.dataset.client === client;
     t.classList.toggle('active', on);
     t.setAttribute('aria-selected', String(on));
@@ -195,30 +183,137 @@ function normalizeUrl(raw) {
   return (isLocalHost(v) ? 'http://' : 'https://') + v;
 }
 
+// Pasted paths: Windows' "Copy as path" adds quotes, a dragged file URL
+// starts with file://.
+function normalizePath(raw) {
+  let v = String(raw || '').trim().replace(/^["']|["']$/g, '');
+  if (/^file:\/\//i.test(v)) {
+    try { v = decodeURIComponent(new URL(v).pathname); } catch (e) { /* keep as typed */ }
+  }
+  return v.replace(/(.)[\\/]+$/, '$1');
+}
+
+// How to copy a folder's full path on this OS, since the folder picker can
+// only ever hand the page the folder's name.
+function copyPathTip() {
+  const p = (navigator.userAgentData && navigator.userAgentData.platform) || navigator.platform || '';
+  if (/mac/i.test(p)) return 'To get the full path: select the folder in Finder and press ⌥⌘C, then paste it here.';
+  if (/win/i.test(p)) return 'To get the full path: Shift + right-click the folder in Explorer, choose "Copy as path", then paste it here.';
+  return 'To get the full path: run pwd in a terminal inside the folder, then paste it here.';
+}
+
+let useMode = 'agent'; // 'agent' | 'cli'
+
+// Terminal commands for the same URLs. Paths are relative, so they land in
+// whatever folder the terminal is in.
+function cliCommands(target, other) {
+  const prefix = Number(settings.port) !== DEFAULTS.port ? `SCORLY_PORT=${settings.port} ` : '';
+  const run = (args) => `${prefix}npx -y ${PACKAGE} ${args}`;
+  if (other) {
+    return [
+      `# Audit both pages and keep the results`,
+      run(`audit ${other} --save compare-with.json`),
+      run(`audit ${target} --save page.json`),
+      '',
+      `# Field-by-field differences`,
+      run('compare compare-with.json page.json'),
+    ].join('\n');
+  }
+  return [
+    '# Audit and keep the result',
+    run(`audit ${target} --save before.json`),
+    '',
+    '# …make changes, then see what moved',
+    run(`audit ${target} --compare before.json`),
+  ].join('\n');
+}
+
 function renderPrompt() {
   const target = normalizeUrl($('auditUrl').value) || DEFAULT_AUDIT_URL;
   const other = normalizeUrl($('compareUrl').value);
+  const agentMode = useMode === 'agent';
+  const fix = agentMode && $('fixToggle').checked;
+
+  document.querySelectorAll('#useTabs .ag-tab').forEach((t) => {
+    const on = t.dataset.use === useMode;
+    t.classList.toggle('active', on);
+    t.setAttribute('aria-selected', String(on));
+  });
+  $('useAgent').classList.toggle('hidden', !agentMode);
+  $('useCli').classList.toggle('hidden', agentMode);
+  $('cliSnippet').textContent = cliCommands(target, other);
+  const folder = normalizePath($('codebasePath').value);
+  const isPath = /[\\/]/.test(folder);
+
+  $('codebaseField').classList.toggle('hidden', !fix);
+  $('auditLabel').textContent = fix ? 'Page to audit and fix' : 'Page to audit';
+  $('auditSub').textContent = fix
+    ? 'Usually your local dev server: the agent edits the code behind it.'
+    : 'Any page: your local dev server or a live site.';
+  $('fixSub').textContent = fix
+    ? 'The agent fixes what it can, re-audits and reports the before/after score.'
+    : 'Off: the agent only audits and reports back. No files are changed.';
+  $('codebaseSub').textContent = folder && !isPath
+    ? 'Only the folder name is known (browsers don\'t reveal full paths). ' + copyPathTip()
+    : 'Optional if your agent already has the project open. ' + copyPathTip();
+  $('pasteHint').textContent = fix
+    ? 'Paste this into a new agent session. In Claude Desktop, attach the project folder first with + → Add folder.'
+    : 'Paste this into a new agent session:';
+
   // Names the tool outright: told only "use Scorly", an agent without the
   // tool goes looking for a browser extension. Desktop agents also prefix MCP
   // tool names (mcp__scorly__…) and load tools on demand, so the prompt says
   // to search before concluding it's missing.
   const find = 'Use the Scorly MCP tools (scorly_audit, scorly_compare; names may have a prefix like mcp__scorly__, and if your tools load on demand, search your tools for "scorly" first). ';
   const guard = ' If no Scorly tool exists after searching, stop and tell me instead of using a browser.';
-  $('promptExample').textContent = other
-    ? find + `Audit ${target} and ${other} and compare them. ` +
-      `Fix the issues on ${target} that you can in this codebase, most severe first. ` +
-      `Then re-audit ${target} and tell me how its score changed, what you fixed, and what still differs from ${other}.` + guard
-    : find + `Audit ${target}. Fix the issues you can in this codebase, most severe first. ` +
-      `Then re-audit it and tell me how the score changed and what you fixed.` + guard;
+  const where = !folder ? 'in this codebase'
+    : isPath ? `in the codebase at ${folder}` : `in the project folder named "${folder}"`;
+
+  let body;
+  if (fix && other) {
+    body = `Audit ${target} and ${other} and compare them. ` +
+      `Fix the issues on ${target} that you can ${where}, most severe first. ` +
+      `Then re-audit ${target} and tell me how its score changed, what you fixed, and what still differs from ${other}.`;
+  } else if (fix) {
+    body = `Audit ${target}. Fix the issues you can ${where}, most severe first. ` +
+      'Then re-audit it and tell me how the score changed and what you fixed.';
+  } else if (other) {
+    body = `Audit ${target} and ${other} and compare them. Report back both scores, what differs between the two, ` +
+      `and the most important issues on ${target} with how to fix each, most severe first. Don't change any files.`;
+  } else {
+    body = `Audit ${target} and report back the overall and category scores, then the most important issues ` +
+      'with how to fix each, most severe first. Don\'t change any files.';
+  }
+  $('promptExample').textContent = find + body + guard;
 }
 
 function saveFields() {
   try {
-    localStorage.setItem('scorly-agent-fields', JSON.stringify({ audit: $('auditUrl').value, compare: $('compareUrl').value }));
+    localStorage.setItem('scorly-agent-fields', JSON.stringify({
+      audit: $('auditUrl').value,
+      compare: $('compareUrl').value,
+      codebase: $('codebasePath').value,
+      fix: $('fixToggle').checked,
+      use: useMode,
+    }));
   } catch (e) { /* per-viewer convenience only */ }
 }
 
-// Restores the last-typed URLs, then applies ?url= from the popup (the page
+// The File System Access picker (Chrome) returns a handle whose only
+// location detail is the folder's name. Firefox has no picker: the button
+// hides and the path is typed or pasted.
+async function chooseFolder() {
+  try {
+    const handle = await window.showDirectoryPicker({ mode: 'read' });
+    const current = normalizePath($('codebasePath').value);
+    // Keep a typed full path that already ends in this folder.
+    if (!current.endsWith('/' + handle.name) && !current.endsWith('\\' + handle.name)) $('codebasePath').value = handle.name;
+    renderPrompt();
+    saveFields();
+  } catch (e) { /* cancelled */ }
+}
+
+// Restores the last-typed fields, then applies ?url= from the popup (the page
 // it was showing): a dev-server URL is the page to fix; a live URL becomes
 // the comparison when a dev server is already filled in.
 function initFields() {
@@ -226,6 +321,9 @@ function initFields() {
   try { saved = JSON.parse(localStorage.getItem('scorly-agent-fields') || '{}') || {}; } catch (e) { /* ignore */ }
   $('auditUrl').value = saved.audit || '';
   $('compareUrl').value = saved.compare || '';
+  $('codebasePath').value = saved.codebase || '';
+  $('fixToggle').checked = saved.fix !== false;
+  useMode = saved.use === 'cli' ? 'cli' : 'agent';
 
   const fromPopup = new URLSearchParams(location.search).get('url');
   if (fromPopup && /^https?:\/\//i.test(fromPopup)) {
@@ -237,7 +335,17 @@ function initFields() {
     saveFields();
   }
 
-  ['auditUrl', 'compareUrl'].forEach((id) => $(id).addEventListener('input', () => { renderPrompt(); saveFields(); }));
+  if (typeof window.showDirectoryPicker !== 'function') $('chooseFolderBtn').classList.add('hidden');
+  $('chooseFolderBtn').addEventListener('click', chooseFolder);
+  ['auditUrl', 'compareUrl', 'codebasePath'].forEach((id) => $(id).addEventListener('input', () => { renderPrompt(); saveFields(); }));
+  $('fixToggle').addEventListener('change', () => { renderPrompt(); saveFields(); });
+  $('useTabs').addEventListener('click', (e) => {
+    const tab = e.target.closest('.ag-tab');
+    if (!tab) return;
+    useMode = tab.dataset.use;
+    renderPrompt();
+    saveFields();
+  });
   renderPrompt();
 }
 
@@ -247,6 +355,7 @@ async function saveSettings(patch) {
   settings = { ...settings, ...patch };
   await agentPageApi.storage.local.set({ [SETTINGS_KEY]: settings });
   renderAll();
+  renderPrompt(); // the CLI commands carry the port
 }
 
 function renderAll() {
@@ -284,7 +393,7 @@ async function init() {
   });
 
   try { client = localStorage.getItem('scorly-agent-client') || client; } catch (err) { /* ignore */ }
-  if (!['all', 'vscode', 'cli'].includes(client)) client = 'all'; // saved from the old per-app tabs
+  if (!['all', 'vscode'].includes(client)) client = 'all'; // saved from older tab sets
   $('clientTabs').addEventListener('click', (e) => {
     const tab = e.target.closest('.ag-tab');
     if (!tab) return;

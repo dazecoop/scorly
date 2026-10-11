@@ -13,6 +13,7 @@ const { Bridge, DEFAULT_PORT } = require('./bridge');
 const { runAudit, ENGINE_LABEL } = require('./run');
 const engine = require('./engine');
 const installer = require('./install');
+const term = require('./terminal');
 
 const HELP = `Scorly — local SEO / content / performance audits for AI agents and scripts.
 
@@ -23,6 +24,8 @@ Usage:
                                    if connected, otherwise headless Chrome
     --save <file.json>             Keep the audit to compare against later
     --compare <file.json>          Show what changed since a saved audit
+    --markdown                     Plain Markdown even in a terminal (piped output
+                                   is always Markdown; NO_COLOR also turns colour off)
   scorly compare <before.json> <after.json>
   scorly status                    Which agent apps have Scorly, and is the extension connected?
   scorly mcp                       Run as an MCP server over stdio
@@ -78,11 +81,17 @@ async function main() {
     try {
       const { audit, engine: used, note } = await runAudit(url, { bridge, via: args.via || 'auto', log });
       const detail = args.detail || 'summary';
+      const pretty = !args.markdown && term.useColor();
       if (detail === 'json') console.log(JSON.stringify(engine.jsonReport(audit), null, 2));
-      else if (detail === 'full') console.log(engine.fullMarkdown(audit));
+      else if (detail === 'full') console.log(pretty ? term.renderMarkdown(engine.fullMarkdown(audit)) : engine.fullMarkdown(audit));
+      else if (pretty) process.stdout.write(term.renderSummary(engine.summaryModel(audit), { engine: ENGINE_LABEL[used] }));
       else console.log(engine.summaryMarkdown(audit, { engine: ENGINE_LABEL[used] }));
       if (note) console.error(note);
-      if (args.compare) console.log('\n' + engine.deltaMarkdown(loadAudit(args.compare), audit));
+      if (args.compare) {
+        const before = loadAudit(args.compare);
+        if (pretty) process.stdout.write(term.renderDelta(engine.deltaModel(before, audit), { beforeLabel: args.compare }));
+        else console.log('\n' + engine.deltaMarkdown(before, audit));
+      }
       if (args.save) {
         fs.writeFileSync(args.save, JSON.stringify(audit));
         console.error(`Saved audit to ${args.save}`);
@@ -104,7 +113,11 @@ async function main() {
   if (cmd === 'compare') {
     const [, before, after] = args._;
     if (!before || !after) throw new Error('Usage: scorly compare <before.json> <after.json>');
-    console.log(engine.diffMarkdown(loadAudit(before), loadAudit(after)));
+    const a = loadAudit(before);
+    const b = loadAudit(after);
+    const md = engine.diffMarkdown(a, b);
+    if (!args.markdown && term.useColor()) process.stdout.write(term.renderCompare(engine.diffAudits(a, b), md));
+    else console.log(md);
     return;
   }
 

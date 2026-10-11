@@ -138,45 +138,57 @@ function scoreAudit(audit) {
 
 const SEV_RANK = { high: 0, med: 1, low: 2 };
 
-// The compact report an agent works from: scores, then every failing and
-// warning check with the reason, most severe first. Passed checks are only
-// counted — listing 80 of them would bury the work.
-function summaryMarkdown(audit, { engine } = {}) {
+// What a summary report shows, as data: rendered as Markdown for agents
+// (summaryMarkdown) and with colour for people at a terminal (terminal.js).
+// Failing and warning checks are listed most severe first; passed checks are
+// only counted, since listing 80 of them would bury the work.
+function summaryModel(audit) {
   const s = scoreAudit(audit);
+  const checks = (status) => s.allChecks
+    .filter((c) => c.status === status)
+    .sort((a, b) => (SEV_RANK[a.severity] ?? 3) - (SEV_RANK[b.severity] ?? 3))
+    .map((c) => ({ ...c, categoryLabel: scorly.categoryLabels[c.category] || c.category }));
+  return {
+    id: audit.id,
+    url: audit.url,
+    capturedAt: audit.capturedAt,
+    origin: audit.origin,
+    overall: s.overallScore,
+    counts: s.counts,
+    categories: Object.keys(scorly.categoryLabels)
+      .filter((key) => s.categoryScores[key] != null)
+      .map((key) => ({ key, label: scorly.categoryLabels[key], score: s.categoryScores[key] })),
+    issues: checks('fail'),
+    warnings: checks('warn'),
+  };
+}
+
+function summaryMarkdown(audit, { engine } = {}) {
+  const m = summaryModel(audit);
   const lines = [];
-  lines.push(`# Scorly audit — ${audit.url}`);
+  lines.push(`# Scorly audit — ${m.url}`);
   lines.push('');
-  lines.push(`Audit id: \`${audit.id}\` · captured ${audit.capturedAt}` + (engine ? ` · via ${engine}` : ''));
+  lines.push(`Audit id: \`${m.id}\` · captured ${m.capturedAt}` + (engine ? ` · via ${engine}` : ''));
   lines.push('');
-  lines.push(`**Overall score: ${s.overallScore}/100** — ${s.counts.issues} issues, ${s.counts.warnings} warnings, ${s.counts.passed} passed`);
+  lines.push(`**Overall score: ${m.overall}/100** — ${m.counts.issues} issues, ${m.counts.warnings} warnings, ${m.counts.passed} passed`);
   lines.push('');
   lines.push('| Category | Score |');
   lines.push('| --- | --- |');
-  Object.keys(scorly.categoryLabels).forEach((key) => {
-    const v = s.categoryScores[key];
-    if (v != null) lines.push(`| ${scorly.categoryLabels[key]} | ${v} |`);
-  });
+  m.categories.forEach((c) => lines.push(`| ${c.label} | ${c.score} |`));
   lines.push('');
-  if (audit.origin === 'background') {
+  if (m.origin === 'background') {
     lines.push('_Captured in a background tab: the browser does not paint those, so LCP/CLS were not recorded._');
     lines.push('');
   }
-
-  const listChecks = (status, heading) => {
-    const rows = s.allChecks
-      .filter((c) => c.status === status)
-      .sort((a, b) => (SEV_RANK[a.severity] ?? 3) - (SEV_RANK[b.severity] ?? 3));
+  [['Issues', m.issues], ['Warnings', m.warnings]].forEach(([heading, rows]) => {
     if (!rows.length) return;
     lines.push(`## ${heading} (${rows.length})`);
     lines.push('');
     rows.forEach((c) => {
-      const label = scorly.categoryLabels[c.category] || c.category;
-      lines.push(`- **[${c.severity}] ${c.label}** (${label} · \`${c.category}/${c.id}\`)${c.detail ? ' — ' + c.detail : ''}`);
+      lines.push(`- **[${c.severity}] ${c.label}** (${c.categoryLabel} · \`${c.category}/${c.id}\`)${c.detail ? ' — ' + c.detail : ''}`);
     });
     lines.push('');
-  };
-  listChecks('fail', 'Issues');
-  listChecks('warn', 'Warnings');
+  });
   return lines.join('\n');
 }
 
@@ -196,34 +208,45 @@ function diffMarkdown(before, after) {
   return scorly.diffToMarkdown(diffAudits(before, after));
 }
 
+// What changed between two audits of the same page, as data: the overall
+// and category scores that moved, and checks whose verdict flipped.
+function deltaModel(before, after) {
+  const diff = diffAudits(before, after);
+  const key = (c) => c.category + '/' + c.id;
+  const prev = new Map(scoreAudit(before).allChecks.map((c) => [key(c), c]));
+  return {
+    beforeId: before.id,
+    afterId: after.id,
+    overall: diff.scores.overall,
+    categories: diff.scores.categories.filter((c) => c.delta !== 0),
+    flips: scoreAudit(after).allChecks
+      .filter((c) => prev.has(key(c)) && prev.get(key(c)).status !== c.status)
+      .map((c) => ({ label: c.label, from: prev.get(key(c)).status, to: c.status })),
+  };
+}
+
 // Short "what changed" block appended to a re-audit of the same URL.
 function deltaMarkdown(before, after) {
-  const diff = diffAudits(before, after);
+  const d = deltaModel(before, after);
   const sign = (n) => (n > 0 ? '+' + n : String(n));
   const lines = [];
-  lines.push(`## Change since previous audit \`${before.id}\``);
+  lines.push(`## Change since previous audit \`${d.beforeId}\``);
   lines.push('');
-  lines.push(`Overall: ${diff.scores.overall.a} → ${diff.scores.overall.b} (${sign(diff.scores.overall.delta)})` +
-    (diff.scores.overall.unreliable ? ' — performance not like-for-like (background capture)' : ''));
-  const moved = diff.scores.categories.filter((c) => c.delta !== 0);
-  moved.forEach((c) => lines.push(`- ${c.label}: ${c.a} → ${c.b} (${sign(c.delta)})`));
-
-  const s1 = scoreAudit(before);
-  const s2 = scoreAudit(after);
-  const key = (c) => c.category + '/' + c.id;
-  const prev = new Map(s1.allChecks.map((c) => [key(c), c]));
-  const flips = s2.allChecks.filter((c) => prev.has(key(c)) && prev.get(key(c)).status !== c.status);
-  if (flips.length) {
+  lines.push(`Overall: ${d.overall.a} → ${d.overall.b} (${sign(d.overall.delta)})` +
+    (d.overall.unreliable ? ' — performance not like-for-like (background capture)' : ''));
+  d.categories.forEach((c) => lines.push(`- ${c.label}: ${c.a} → ${c.b} (${sign(c.delta)})`));
+  if (d.flips.length) {
     lines.push('');
     lines.push('Checks that changed verdict:');
-    flips.forEach((c) => lines.push(`- ${c.label}: ${prev.get(key(c)).status} → ${c.status}`));
+    d.flips.forEach((c) => lines.push(`- ${c.label}: ${c.from} → ${c.to}`));
   }
   lines.push('');
-  lines.push(`Full comparison: call scorly_compare with before \`${before.id}\` and after \`${after.id}\`.`);
+  lines.push(`Full comparison: call scorly_compare with before \`${d.beforeId}\` and after \`${d.afterId}\`.`);
   return lines.join('\n');
 }
 
 module.exports = {
   captureHeadless, closeHeadless, makeAudit, scoreAudit,
-  summaryMarkdown, fullMarkdown, jsonReport, diffMarkdown, deltaMarkdown,
+  summaryModel, summaryMarkdown, fullMarkdown, jsonReport,
+  diffAudits, diffMarkdown, deltaModel, deltaMarkdown,
 };

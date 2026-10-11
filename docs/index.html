@@ -25,6 +25,7 @@
   </a>
   <nav>
     <a href="./" aria-current="page">Overview</a>
+    <a href="agents.html">AI agents</a>
     <a href="support.html">Support</a>
     <a href="privacy.html">Privacy</a>
   </nav>
@@ -51,7 +52,17 @@ private-network URLs too, where most SEO tools simply refuse to run.</p>
   <li>No account needed</li>
   <li>Private, local analysis</li>
   <li>MIT licensed</li>
+  <li>Works with AI agents</li>
 </ul>
+
+<div class="note">
+  <strong>New: let your AI agent fix it.</strong> Scorly also runs as an MCP
+  server and CLI. Claude Code, Claude Desktop, Cursor or VS Code can audit a
+  page, fix what Scorly finds in your code, then re-audit to show the score
+  moved. One command sets it up:
+  <code>npx -y github:dazecoop/scorly install</code>.
+  <a href="agents.html">How it works →</a>
+</div>
 
 <h2>Scores the whole page, not just the title tag</h2>
 <p>One overall score from 0&ndash;100, broken into nine categories — Technical,
@@ -112,6 +123,14 @@ a background tab, filter to just the differences, then export the whole
 comparison as PDF, CSV, JSON or Markdown — for a pull request, a client email,
 or a spreadsheet.</p>
 
+<h2>Lets your AI agent audit, fix and re-audit</h2>
+<p>Ask your coding agent to audit <code>http://localhost:3000</code> with Scorly and fix what
+it finds. It gets the same scores and checks as the extension, with the reason for
+each, makes the fixes in your codebase, re-audits, and tells you what moved. Turn on
+the extension's agent switch and audits run in your own browser, logins included.
+Or use the same audits from a terminal or CI, with colour-coded reports.
+<a href="agents.html">Set it up in one command</a>.</p>
+
 <h2>Measures real performance</h2>
 <p>TTFB, request count and transferred size come straight from the browser's own
 Navigation and Resource Timing entries for the page as it actually loaded — no
@@ -134,8 +153,8 @@ meant to have a certificate yet.</p>
 </div>
 
 <h2>Privacy</h2>
-<p>No accounts, no analytics, no tracking and no remote server. The only thing
-Scorly stores is a snapshot you explicitly save, and it stays on your machine.
+<p>No accounts, no analytics, no tracking and no remote server. Scorly stores
+only what you ask it to, such as a snapshot you save, and it stays on your machine.
 The <a href="privacy.html">privacy policy</a> sets out exactly what is stored
 and which requests are made.</p>
 
@@ -147,6 +166,7 @@ source, including every scoring rule, is on
 </main>
 
 <footer>
+  <a href="agents.html">AI agents</a> ·
   <a href="support.html">Support</a> ·
   <a href="privacy.html">Privacy policy</a> ·
   <a href="https://github.com/dazecoop/scorly">source on GitHub</a> ·

@@ -19,6 +19,7 @@
   </a>
   <nav>
     <a href="./">Overview</a>
+    <a href="agents.html">AI agents</a>
     <a href="support.html" aria-current="page">Support</a>
     <a href="privacy.html">Privacy</a>
   </nav>
@@ -96,6 +97,17 @@ them.</p>
 expects. Those sections are skipped rather than guessed at. Re-saving the
 snapshot on the current version fixes it.</p>
 
+<h3>My AI agent says Scorly isn't installed.</h3>
+<p>Run <code>npx -y github:dazecoop/scorly status</code> in a terminal. It lists each agent
+app, whether Scorly is installed there and whether it starts. Each app needs a full
+restart after installing, and the test prompt on the <a href="agents.html#test">AI agents
+page</a> tells the agent to search for the tool, which agents with many tools need.</p>
+
+<h3>Can my AI agent use Scorly without the extension?</h3>
+<p>Yes. The MCP server and CLI audit pages in a headless Chrome on their own. The
+extension's agent switch is only needed for audits in your own browser, with your
+logins. See <a href="agents.html">AI agents</a>.</p>
+
 <h3>Does it work in Firefox and Edge?</h3>
 <p>Yes. The same codebase builds for Chrome, Edge and Firefox.</p>
 
@@ -115,6 +127,7 @@ contact <a href="https://github.com/dazecoop">@dazecoop</a> on GitHub.</p>
 </main>
 
 <footer>
+  <a href="agents.html">AI agents</a> ·
   <a href="./">Overview</a> ·
   <a href="privacy.html">Privacy policy</a> ·
   <a href="https://github.com/dazecoop/scorly">source on GitHub</a> ·

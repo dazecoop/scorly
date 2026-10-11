@@ -180,3 +180,55 @@ h3 {
 }
 
 .note strong { color: var(--text); }
+
+/* ---- Code blocks, tables, terminal samples (AI agents page) ---- */
+
+pre {
+  background: var(--code-bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px 14px;
+  overflow-x: auto;
+  font: 0.85rem/1.55 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  margin: 12px 0 16px;
+}
+pre code { background: none; border: 0; padding: 0; font-size: inherit; word-break: normal; }
+
+table { width: 100%; border-collapse: collapse; margin: 12px 0 20px; font-size: 0.94rem; }
+th, td { text-align: left; vertical-align: top; padding: 8px 10px; border-bottom: 1px solid var(--border); }
+th { font-weight: 600; color: var(--muted); font-size: 0.85rem; }
+td code { white-space: nowrap; }
+.table-scroll { overflow-x: auto; }
+
+.steps { counter-reset: step; list-style: none; padding: 0; }
+.steps > li { counter-increment: step; position: relative; padding-left: 2.2em; margin: 14px 0; }
+.steps > li::before {
+  content: counter(step);
+  position: absolute; left: 0; top: 0.1em;
+  width: 1.5em; height: 1.5em; border-radius: 50%;
+  display: grid; place-items: center;
+  background: var(--surface); border: 1px solid var(--border);
+  font-size: 0.8rem; font-weight: 700; color: var(--accent);
+}
+
+/* Terminal sample: always dark, like a terminal. */
+.term {
+  background: #16171d;
+  color: #d8dbe2;
+  border-color: #26262e;
+  line-height: 1.5;
+}
+.term .b { font-weight: 700; }
+.term .d { opacity: 0.62; }
+.term .blue { color: #7aa2ff; }
+.term .green { color: #5fd38d; }
+.term .yellow { color: #f5c451; }
+.term .red { color: #ff6b6b; }
+.term .gray { color: #7a7f8c; }
+.term .badge { color: #16171d; font-weight: 700; padding: 0 0.35em; border-radius: 2px; }
+.term .bg-yellow { background: #e9b43a; }
+.term .bg-red { background: #d64545; color: #fff; }
+.term .bg-green { background: #3fb46a; }
+
+/* Prompts to copy: wrapped, not scrolled sideways. */
+pre.prompt { white-space: pre-wrap; overflow-wrap: anywhere; }

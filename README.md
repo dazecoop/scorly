@@ -16,6 +16,20 @@ nothing is sent to a remote server.
 It works on `localhost` and private-network URLs too, where most SEO tools
 simply refuse to run.
 
+> **New: let your AI agent fix it.** Scorly also runs as an MCP server and
+> CLI. Claude Code, Claude Desktop, Cursor or VS Code can audit a page, fix
+> what Scorly finds in your code, then re-audit and tell you how the score
+> moved. One command sets it up:
+>
+> ```
+> npx -y github:dazecoop/scorly install
+> ```
+>
+> Then ask: *"Use the Scorly MCP tools to audit http://localhost:3000, fix the
+> issues you can, then re-audit and tell me what improved."*
+> [How it works](#ai-agents-mcp-server-and-cli) ·
+> [full guide](https://dazecoop.github.io/scorly/agents.html)
+
 ### Compare localhost against live
 
 Press **Compare** and Scorly opens a full-tab diff of two pages — your local
@@ -41,46 +55,77 @@ Snapshots live in local extension storage, are capped at 8, and can be
 deleted at any time. Nothing is uploaded, and nothing is stored unless you
 press Save.
 
-### Let your AI agent audit, fix and re-audit
+## AI agents: MCP server and CLI
 
-Scorly also runs as an **MCP server and CLI**, so a coding agent (Claude
-Code, Cursor, Claude Desktop, VS Code) can audit a page, fix what it finds in
-your codebase, then re-audit and report how the score moved:
+The same audits the extension runs are available to AI coding agents over
+MCP, and to scripts and CI from a terminal. The audit and scoring code is the
+extension's own, loaded unchanged, so an agent sees exactly the verdicts the
+popup shows.
+
+### Set up
+
+Needs [Node.js 18+](https://nodejs.org). One command adds Scorly to every
+agent app on the machine and proves it starts:
 
 ```
-npx -y github:dazecoop/scorly install      # every agent app found: Claude Code, Claude Desktop, Cursor
-npx -y github:dazecoop/scorly uninstall    # and back out of all of them
+npx -y github:dazecoop/scorly install      # Claude Code, Claude Desktop, Cursor: whichever you have
 npx -y github:dazecoop/scorly status       # which apps have it, and does it start?
+npx -y github:dazecoop/scorly uninstall    # remove it everywhere, and confirm it's gone
 ```
 
 Name an app to limit it (`install claude-code`, `install claude` for both
 Claude apps, `install vscode` in a project folder). `install` writes absolute
-Node paths into each app's config (desktop apps
-don't get your shell's PATH, so a bare `npx` fails for nvm/Homebrew
-installs), then starts the server once the way the app will and ends with
-✔ Verified or ✘ and the reason. `uninstall` re-reads the config to confirm
-the entry is gone.
+Node paths into each app's config, because desktop apps don't get your
+shell's `PATH` and a bare `npx` fails for nvm/Homebrew installs. It keeps a
+`.scorly-backup` of each file it changes, then starts the server the way the
+app will and ends with ✔ Verified, or ✘ and the reason. Restart the apps
+afterwards; a new chat isn't enough.
 
-> "Use the Scorly MCP tools to audit http://localhost:3000, fix the issues
-> you can, then re-audit and tell me what improved."
+### Use it
 
-The agent gets `scorly_audit` (scores plus every failing check and warning,
-with the reason), `scorly_compare` (the same diff engine as the Compare view)
-and `scorly_status`. The audit and scoring code is the extension's own, loaded
-unchanged, so the agent sees the same verdicts the popup does.
+The extension's **AI agents** page (robot icon in the popup) walks through
+setup, gives a prompt to test the install, and builds the prompt for you:
+the page to audit, an optional page to compare with, whether the agent should
+fix issues or only report them, and the project folder.
+
+| Tool | Returns |
+| --- | --- |
+| `scorly_audit` | Overall and category scores, then every failing check and warning with severity and reason, most severe first. Re-auditing a URL adds what changed. `detail: "full"` / `"json"` for more. |
+| `scorly_compare` | A field-by-field diff of two audits from the session, from the same engine as the Compare view. |
+| `scorly_status` | Whether audits run in your browser or in headless Chrome. |
+
+Prompts should name the tools. Agents with many tools load them on demand,
+and MCP tool names usually carry a prefix (`mcp__scorly__scorly_audit`), so
+"use Scorly" alone can make an agent conclude it isn't installed.
+
+### Your browser or headless
 
 Audits run in a headless Chrome by default. Turn on **Let AI agents use
-Scorly** in the extension (robot icon in the popup, or the extension's
-options page) and they run in your own browser instead, with your logins, so
-pages behind sign-in work too. The extension then connects to a socket on
-`127.0.0.1` that only Scorly's agent tool listens on. It's off by default,
-can be limited to localhost URLs, and the options page shows live status and
-setup steps for each agent. Without MCP:
+Scorly** in the extension and they run in your own browser instead, with your
+logins, so pages behind sign-in work too:
+
+- The agent tool opens a bridge on `ws://127.0.0.1:47615` only while it's
+  auditing, and closes it after 10 idle minutes. Web pages can't connect to
+  it, only the extension and local programs.
+- The extension looks for the bridge every 30 seconds while the switch is on.
+  Each audit runs in a background tab that closes when it's done.
+- While it's connected, the popup shows a strip with a **Stop** button.
+- It's off by default, can be limited to localhost URLs, and the port can be
+  changed (`SCORLY_PORT`).
+
+### CLI
 
 ```
 npx -y github:dazecoop/scorly audit http://localhost:3000 --save before.json
 npx -y github:dazecoop/scorly audit http://localhost:3000 --compare before.json
+npx -y github:dazecoop/scorly compare live.json local.json
 ```
+
+In a terminal the report is colour-coded: the score, a bar per category, and
+severity badges on every issue and warning. Piped output is plain Markdown
+(`--markdown` or `NO_COLOR=1` force it). `--detail full|json` gives the
+complete report or raw data, and `--via browser|headless` picks the engine.
+Works in CI.
 
 ---
 
@@ -249,7 +294,7 @@ toggle.
 ```
 manifest.json
 popup/
-  popup.html           UI markup — 13 tabs + compare bar + export footer
+  popup.html           UI markup — 13 tabs + compare bar + export footer + AI-agent strip
   theme.css            Design tokens (light + dark), shared with the compare view
   popup.css            Popup styling
   popup.js             Orchestration: analyze, wire up tabs/buttons
@@ -258,6 +303,7 @@ popup/
   analyze.js           Shared capture step: run the analyzer in a tab, add robots/sitemap/favicon
                        checks and read the page's served HTML + response headers
   snapshots.js         Local snapshot store (chrome.storage.local) for the compare view
+  agent-names.js       MCP client ids → app names, shared by the popup strip and the AI agents page
   scoring.js           Turns extracted data into 9 category scores + a severity-tagged checklist,
                        plus the AI Visibility breakdown and the AI-copy / vibe-code detectors
   render.js            All DOM rendering for every tab
@@ -272,13 +318,18 @@ compare/
 background/
   agent-bridge.js      Opt-in link to a local AI agent: runs audits it requests in a background tab
 settings/
-  agent.html/.js/.css  AI-agent settings: on/off switch, live status, per-agent setup steps
+  agent.html/.js/.css  AI agents page: switch, live status + Stop, setup detection, test prompt,
+                       prompt builder / CLI commands
 agent/                 Node side (MCP server + CLI), not shipped in the extension
-  cli.js               `scorly audit | compare | status | mcp`
+  cli.js               `scorly audit | compare | status | install | uninstall | mcp`
   mcp.js               MCP server over stdio: scorly_audit, scorly_compare, scorly_status
-  engine.js            Loads the extension's own scripts into a vm; headless capture via Puppeteer
-  bridge.js            ws://127.0.0.1 hub the extension connects to, shared by every agent process
+  engine.js            Loads the extension's own scripts into a vm; headless capture via Puppeteer;
+                       summary/delta report models
+  terminal.js          Colour terminal rendering of reports (TTY only; piped output stays Markdown)
+  bridge.js            On-demand ws://127.0.0.1 bridge the extension connects to, shared by every
+                       agent process; closes after 10 idle minutes or on Stop
   run.js               Picks the extension or headless Chrome for each audit
+  install.js           Adds/removes the MCP entry in each agent app's config, then verifies it
 icons/
 ```
 
@@ -287,7 +338,7 @@ Build and test:
 ```
 npm run build            # dist/chrome + dist/firefox, zipped and unpacked
 npm test                 # end-to-end compare checks, driven in real Chrome
-npm run test:agent       # end-to-end agent bridge checks (switch, status, audits)
+npm run test:agent       # end-to-end AI-agent checks: settings page, bridge, Stop, audits, MCP
 npm run store-assets     # regenerate the store screenshots in store-assets/
 ```
 

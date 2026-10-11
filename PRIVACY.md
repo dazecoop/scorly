@@ -2,8 +2,9 @@
 
 Scorly does not collect or transmit any of your data. There is no account,
 no analytics, no tracking, and no remote server — Scorly doesn't have one.
-The only thing it ever stores is a page snapshot you explicitly ask it to
-save for comparison, and that stays on your own machine.
+It stores only what you ask for, such as a page snapshot you save for
+comparison or the AI agent settings you choose, and all of it stays on your
+own machine.
 
 ## What Scorly does
 
@@ -57,39 +58,56 @@ never loads a page you did not ask it to.
 No request is ever made to a Scorly-owned or third-party server. There is no
 telemetry, crash reporting, or usage tracking of any kind.
 
-## AI agent access (off by default)
+## AI agents: MCP server and CLI
 
-Scorly can be used by an AI coding agent on your computer (Claude Code,
-Cursor and others) through Scorly's own MCP server / command-line tool. That
-tool runs locally, on your machine, and is something you install yourself.
+Scorly can also be used by an AI coding agent (Claude Code, Claude Desktop,
+Cursor, VS Code) or from a terminal, through Scorly's own agent tool. That
+tool is open source, runs on your own computer, and is only present if you
+install it (`npx -y github:dazecoop/scorly install`).
 
-If you turn on **Let AI agents use Scorly** in the extension's settings, the
-extension opens one WebSocket connection to `127.0.0.1` (your own computer,
-port 47615 unless you change it), where only that tool listens. When the
-agent asks for an audit, Scorly loads the URL in a background tab, runs the
-same analysis the popup runs, closes the tab and passes the result back over
-that local connection. Requests made while loading the page are the same
-ones listed under *Network requests* below.
+### What the agent tool does on your computer
 
-- The connection never leaves your computer, and no Scorly-owned or
-  third-party server is involved.
-- Pages are loaded with this browser's cookies, so an agent can audit pages
-  you are signed in to. If you don't want that, leave the switch off (audits
-  then run in a separate headless browser with no logins), or tick **Only
-  allow localhost URLs**.
-- The agent's tool opens its end of that connection only while it is
-  auditing, and closes it after 10 idle minutes. The **Stop** button in the
-  popup closes it immediately.
-- While the switch is on, the extension looks for that connection every 30
-  seconds, and stores the connection status and the URL of the last audit in
-  local extension storage so the settings page can show it. Turning the
-  switch off closes the connection and removes that status record.
-- Scorly also remembers the names of agent apps that have connected (for
-  example "claude-code") and when they last did, so the settings page can
-  tell you setup is done. It stays in local extension storage and is removed
-  when you uninstall Scorly.
-- What the agent does with an audit, including whether its AI provider sees
-  the report, is up to the agent you use, not Scorly.
+- **Setup.** `install` adds a "scorly" entry to the MCP configuration of each
+  agent app it finds, after saving a `.scorly-backup` copy of that file.
+  `uninstall` removes the entry again. It changes nothing else.
+- **Audits.** An audit loads the page, runs the same checks the extension
+  runs and makes the same requests listed under *Network requests* above, to
+  the site being audited and nowhere else. By default it uses a separate
+  headless Chrome, with no cookies or logins of yours.
+- **Results.** The MCP server keeps a session's audits in memory so they can
+  be compared, and forgets them when the agent app closes. The CLI writes an
+  audit to disk only when you pass `--save`.
+- **One small state file.** `~/.scorly/bridge.json` records when the
+  extension last connected and when its switch was last turned off, so an
+  agent knows whether to wait for it. Nothing else is in it.
+
+### Running audits in your browser (off by default)
+
+If you turn on **Let AI agents use Scorly** in the extension's AI agents
+settings, audits can run in your own browser instead:
+
+- The agent tool opens a WebSocket on `127.0.0.1` (your own computer, port
+  47615 unless you change it) only while it is auditing, and closes it after
+  10 idle minutes. The **Stop** button in the popup closes it immediately.
+- The extension looks for that connection every 30 seconds while the switch
+  is on. Web pages can't connect to it: only the extension and programs on
+  your computer are accepted.
+- For each audit, Scorly loads the URL in a background tab, runs the same
+  analysis the popup runs, closes the tab and passes the result back over
+  that local connection.
+- Pages load with this browser's cookies, so an agent can audit pages you
+  are signed in to. If you don't want that, leave the switch off, or tick
+  **Only allow localhost URLs**.
+- The extension stores, in local extension storage: your agent settings;
+  while the switch is on, the connection status and the URL of the last
+  audit (removed when you turn the switch off); and the names of agent apps
+  that have connected (for example "claude-code") with when they last did,
+  so the settings page can tell you setup is done. All of it is removed when
+  you uninstall Scorly.
+
+No Scorly-owned or third-party server is involved at any point. What your
+agent does with an audit, including whether its AI provider sees the report,
+is up to the agent you use, not Scorly.
 
 ## "AI" features do not use AI
 

@@ -1,0 +1,249 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Scorly for AI agents — MCP server &amp; CLI</title>
+<meta name="description" content="Let Claude Code, Claude Desktop, Cursor or VS Code audit a page with Scorly, fix what it finds in your code, and re-audit to show the improvement. One-command setup, local only.">
+<link rel="icon" href="icon32.png" type="image/png">
+<link rel="canonical" href="https://dazecoop.github.io/scorly/agents.html">
+<meta property="og:type" content="website">
+<meta property="og:title" content="Scorly for AI agents — MCP server &amp; CLI">
+<meta property="og:description" content="Your coding agent audits a page, fixes what Scorly finds, then re-audits to prove it. Local only, one command to set up.">
+<meta property="og:url" content="https://dazecoop.github.io/scorly/agents.html">
+<meta property="og:image" content="https://dazecoop.github.io/scorly/social-preview.png">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <a class="brand" href="./">
+    <img src="icon32.png" alt="" width="32" height="32">
+    <span>Scorly</span>
+  </a>
+  <nav>
+    <a href="./">Overview</a>
+    <a href="agents.html" aria-current="page">AI agents</a>
+    <a href="support.html">Support</a>
+    <a href="privacy.html">Privacy</a>
+  </nav>
+</header>
+
+<main>
+<h1>Scorly for AI agents</h1>
+
+<p class="lede">Scorly runs as an <strong>MCP server</strong> and a <strong>command-line tool</strong> as
+well as a browser extension. Your coding agent can audit a page, fix what
+Scorly finds in your code, then re-audit and tell you how the score moved,
+using the same checks and scores as the extension. Everything runs on your own
+computer.</p>
+
+<ul class="pills">
+  <li>Claude Code</li>
+  <li>Claude Desktop</li>
+  <li>Cursor</li>
+  <li>VS Code (Copilot)</li>
+  <li>Terminal &amp; CI</li>
+</ul>
+
+<h2 id="setup">Set up in one command</h2>
+<p>You need <a href="https://nodejs.org">Node.js 18 or newer</a>. In a terminal, run:</p>
+<pre><code>npx -y github:dazecoop/scorly install</code></pre>
+<p>This adds Scorly to every agent app it finds on your computer (Claude Code,
+Claude Desktop and Cursor, whichever you have), then starts Scorly once, the way
+those apps will, to prove it works:</p>
+<pre class="term"><code><span class="d">Installing Scorly in every agent app found on this computer:</span>
+<span class="green">✔</span> Claude Code: added <span class="d">(~/.claude.json)</span>
+<span class="green">✔</span> Claude Desktop: added <span class="d">(…/Claude/claude_desktop_config.json)</span>
+<span class="d">·</span> Cursor: not found on this computer, skipped
+
+  <span class="d">Checking it starts…</span>
+<span class="green">✔ Verified:</span> the Scorly MCP server starts and offers scorly_audit, scorly_compare, scorly_status.</code></pre>
+<p>Then restart the apps it lists: start a new Claude Code session (in VS Code,
+reload the window), or fully quit and reopen Claude Desktop or Cursor. A new
+chat isn't enough, because apps only load MCP servers when they start.</p>
+
+<div class="note">
+  <strong>Why a command instead of a config snippet?</strong> Desktop apps
+  started from the Dock or Start menu don't get your terminal's
+  <code>PATH</code>, so a plain <code>npx</code> in their config fails for anyone
+  whose Node came from nvm, Volta or Homebrew. <code>install</code> writes
+  absolute paths instead and keeps a <code>.scorly-backup</code> of each config
+  it changes.
+</div>
+
+<div class="table-scroll">
+<table>
+  <tr><th>Command</th><th>What it does</th></tr>
+  <tr><td><code>install</code></td><td>Every agent app found on this computer.</td></tr>
+  <tr><td><code>install claude</code></td><td>Claude Code and Claude Desktop.</td></tr>
+  <tr><td><code>install claude-code</code><br><code>install claude-desktop</code><br><code>install cursor</code></td><td>One app.</td></tr>
+  <tr><td><code>install vscode</code></td><td>The project you run it in (<code>.vscode/mcp.json</code>), for Copilot agent mode.</td></tr>
+  <tr><td><code>uninstall</code></td><td>Removes Scorly from every app, then re-reads each config to confirm it's gone. Takes the same app names.</td></tr>
+  <tr><td><code>status</code></td><td>Lists each app, whether Scorly is installed there and whether it starts, and whether the extension is connected.</td></tr>
+</table>
+</div>
+<p>Installed a new agent app later? Run <code>install</code> again.</p>
+
+<h2 id="test">Check it works</h2>
+<p>Start a new session in your agent and paste:</p>
+<pre class="prompt"><code>Find the Scorly MCP server's scorly_status tool. Its name may have a prefix, like mcp__scorly__scorly_status, and if your tools load on demand, search your tools for "scorly" first. Call it and reply with exactly what it returns. Only if no Scorly tool exists after searching, reply with: SCORLY NOT INSTALLED</code></pre>
+<ul>
+  <li><strong>"Scorly MCP is working … Audits run in the user's browser"</strong>: all set.</li>
+  <li><strong>"Scorly MCP is working … The Scorly extension is not connected"</strong>: it works,
+    and audits run in a headless Chrome. To use your own browser, see
+    <a href="#browser">Run audits in your own browser</a>.</li>
+  <li><strong>"SCORLY NOT INSTALLED"</strong>: this app didn't load Scorly. Check that the
+    install listed it with ✔ and ended with ✔ Verified, then fully quit and
+    reopen it. <code>npx -y github:dazecoop/scorly status</code> shows which apps have it.</li>
+</ul>
+<p>The test prompt names the tool and tells the agent to search for it. Agents
+with many tools load them on demand, and MCP tool names usually carry a prefix,
+so a vaguer prompt ("use Scorly") can make an agent conclude Scorly isn't there,
+or reach for a browser instead.</p>
+
+<h2 id="ask">Ask your agent</h2>
+<p>The extension's <strong>AI agents</strong> page (the robot icon in the popup) builds these
+prompts for you from the page you were looking at. To audit and fix:</p>
+<pre class="prompt"><code>Use the Scorly MCP tools (scorly_audit, scorly_compare; names may have a prefix like mcp__scorly__, and if your tools load on demand, search your tools for "scorly" first). Audit http://localhost:3000. Fix the issues you can in the codebase at /Users/you/Sites/my-site, most severe first. Then re-audit it and tell me how the score changed and what you fixed. If no Scorly tool exists after searching, stop and tell me instead of using a browser.</code></pre>
+<ul>
+  <li><strong>Audit only:</strong> turn off <em>Fix the issues in my code</em> and the prompt asks for
+    the scores and the most important issues with how to fix each, with no files changed.</li>
+  <li><strong>Compare with another page:</strong> fill in <em>Compare with</em> (usually your live
+    site) and the agent audits both and reports what differs.</li>
+  <li><strong>Project folder:</strong> optional when the agent already has your project open. In
+    Claude Desktop, attach the folder to the chat with <em>+ → Add folder</em>. The folder
+    picker can only fill in the folder's name, because browsers don't reveal full paths.
+    For the full path, select the folder in Finder and press <code>⌥⌘C</code> (on Windows:
+    Shift + right-click → <em>Copy as path</em>).</li>
+</ul>
+
+<h3>What the agent gets</h3>
+<div class="table-scroll">
+<table>
+  <tr><th>Tool</th><th>Returns</th></tr>
+  <tr><td><code>scorly_audit</code></td><td>The overall and category scores, then every failing check and
+    warning with its severity and reason, most severe first. <code>detail: "full"</code> returns the
+    complete report and <code>"json"</code> the raw export. Re-auditing a URL already audited in the session
+    adds a <em>Change since previous audit</em> section.</td></tr>
+  <tr><td><code>scorly_compare</code></td><td>A field-by-field diff of two audits from the session (before and
+    after fixes, or localhost against live), using the same engine as the extension's Compare view.</td></tr>
+  <tr><td><code>scorly_status</code></td><td>Whether audits run in your browser or in headless Chrome, and this
+    session's audits.</td></tr>
+</table>
+</div>
+<p>Some checks depend on hosting rather than code (HTTP/2, security headers,
+HSTS), so they can't pass on a local dev server. Agents are told to say so
+rather than work around them.</p>
+
+<h2 id="browser">Run audits in your own browser</h2>
+<p>By default, audits run in a separate headless Chrome. Turn on <strong>Let AI agents
+use Scorly</strong> on the extension's AI agents page and they run in your own browser
+instead:</p>
+<ul>
+  <li><strong>Your logins:</strong> pages you're signed in to can be audited.</li>
+  <li><strong>No extra Chrome:</strong> nothing else to install, and it works for Firefox users.</li>
+  <li><strong>What you'll see:</strong> each audit opens the page in a background tab, runs the same
+    analysis as the popup, and closes the tab.</li>
+</ul>
+
+<h3>How the connection works</h3>
+<ol class="steps">
+  <li>When an agent audits a page, Scorly's agent tool opens a bridge on
+    <code>ws://127.0.0.1:47615</code>, on your own computer.</li>
+  <li>The extension checks for it every 30 seconds while the switch is on, and connects.
+    The first audit after a quiet spell can wait up to 30 seconds for that.</li>
+  <li>The bridge closes itself after 10 minutes without audits. Several agent sessions share one bridge.</li>
+  <li>While it's open, the popup shows a strip with a <strong>Stop</strong> button that closes it at once.
+    The agent's next audit opens it again. Turn the switch off to keep agents out of your browser
+    altogether; audits then fall back to headless Chrome.</li>
+</ol>
+<p>The robot icon in the popup shows the state: no dot when the switch is off,
+grey while it's on but idle, blue while an agent is connected.</p>
+<p><strong>Options</strong> (on the AI agents page): <em>Only allow localhost URLs</em> limits
+in-browser audits to dev servers, and anything else runs headless, without your
+logins. <em>Bridge port</em> changes <code>47615</code> if it's taken; the setup command
+shown on the page then includes the matching <code>SCORLY_PORT</code>.</p>
+
+<h2 id="cli">Use the CLI</h2>
+<p>For scripts, CI, or agents without MCP support. Nothing to install first:</p>
+<pre><code><span># Audit and keep the result</span>
+npx -y github:dazecoop/scorly audit http://localhost:3000 --save before.json
+
+<span># …make changes, then see what moved</span>
+npx -y github:dazecoop/scorly audit http://localhost:3000 --compare before.json
+
+<span># Two pages, field by field</span>
+npx -y github:dazecoop/scorly audit https://example.com --save live.json
+npx -y github:dazecoop/scorly audit http://localhost:3000 --save local.json
+npx -y github:dazecoop/scorly compare live.json local.json</code></pre>
+<p>In a terminal the report is colour-coded:</p>
+<pre class="term"><code>  <span class="b blue">◆ Scorly</span>  <span class="b">http://localhost:3000/</span>
+  <span class="d">headless Chrome · 11 Oct, 16:31 · audit amv41nvox6oit</span>
+
+  <span class="badge bg-green"> 97 </span><span class="d"> /100</span>     <span class="gray">✖ 0 issues</span>   <span class="yellow">▲ 6 warnings</span>   <span class="green">✔ 103 passed</span>
+
+  Technical        <span class="green">████████████████████████████████</span>  <span class="b green">100</span>
+  Performance      <span class="green">███████████████████████████████</span><span class="gray">░</span>   <span class="b green">98</span>
+  Accessibility    <span class="green">██████████████████████████████</span><span class="gray">░░</span>   <span class="b green">93</span>
+  AI Visibility    <span class="yellow">███████████████████████████</span><span class="gray">░░░░░</span>   <span class="b yellow">85</span>
+
+  <span class="b yellow">WARNINGS · 6</span>
+  <span class="gray">──────────────────────────────────────────────</span>
+  <span class="badge bg-yellow"> MED  </span> <span class="b">Colour contrast</span><span class="gray">  Accessibility</span>
+         <span class="d">3 of 64 sampled text elements below WCAG AA contrast.</span></code></pre>
+<p>Piped or redirected output is plain Markdown, so scripts and agents get
+something they can parse.</p>
+<div class="table-scroll">
+<table>
+  <tr><th>Option</th><th>Effect</th></tr>
+  <tr><td><code>--detail full</code></td><td>The complete report: every section, link and image.</td></tr>
+  <tr><td><code>--detail json</code></td><td>The raw export payload, for scripts.</td></tr>
+  <tr><td><code>--via browser</code><br><code>--via headless</code></td><td>Require your browser (the extension switch must be on), or never use it. The default uses your browser when connected.</td></tr>
+  <tr><td><code>--save file.json</code><br><code>--compare file.json</code></td><td>Keep an audit, or show what changed since a kept one.</td></tr>
+  <tr><td><code>--markdown</code></td><td>Plain Markdown even in a terminal. <code>NO_COLOR=1</code> does the same.</td></tr>
+  <tr><td><code>SCORLY_PORT</code></td><td>Bridge port, if you changed it in the extension.</td></tr>
+  <tr><td><code>SCORLY_CHROME</code></td><td>A Chrome or Chromium binary for headless audits.</td></tr>
+</table>
+</div>
+
+<h2 id="privacy">Privacy</h2>
+<p>Scorly's agent tool runs on your computer, and the bridge to the extension
+never leaves it (<code>127.0.0.1</code> only, and web pages can't connect to it). No
+Scorly-owned or third-party server is involved. What your agent does with an
+audit, including sending it to its AI provider, is up to the agent you use. The
+<a href="privacy.html#agents">privacy policy</a> covers exactly what is stored and when.</p>
+
+<h2 id="troubleshooting">Troubleshooting</h2>
+<h3>The agent says Scorly isn't installed</h3>
+<p>Run <code>npx -y github:dazecoop/scorly status</code>. If the app shows ✘, run
+<code>install</code> again and read the reason it prints. If it shows ✔, fully quit
+and reopen the app, and use the test prompt above, which tells the agent to
+search for the tool.</p>
+<h3>Audits run headless even though the switch is on</h3>
+<p>Check that the extension's port matches <code>SCORLY_PORT</code> in your agent
+config (the default needs neither), and that <em>Only allow localhost URLs</em>
+isn't blocking the URL. The first audit after a quiet spell waits up to 30
+seconds for the extension to connect.</p>
+<h3>Headless Chrome won't start</h3>
+<p>Install Google Chrome, or set <code>SCORLY_CHROME</code> to a Chrome or Chromium
+binary. Or turn on the extension switch so audits use your browser.</p>
+<h3>Performance numbers differ from the popup</h3>
+<p>A page loaded in a background tab is never painted, so it records no LCP or
+CLS. Scorly marks those audits and leaves paint timings out of before/after
+comparisons rather than reporting a change that isn't real.</p>
+</main>
+
+<footer>
+  <a href="./">Overview</a> ·
+  <a href="support.html">Support</a> ·
+  <a href="privacy.html">Privacy policy</a> ·
+  <a href="https://github.com/dazecoop/scorly">source on GitHub</a> ·
+  MIT licensed
+</footer>
+
+</div>
+</body>
+</html>

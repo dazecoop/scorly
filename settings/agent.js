@@ -16,19 +16,19 @@ const DEFAULT_AUDIT_URL = 'http://localhost:3000';
 // whether the MCP server is set up in an agent.
 const CLI_CLIENT = 'scorly-cli';
 
-// MCP clientInfo names → what the user calls the app, and its setup tab.
+// MCP clientInfo names → what the user calls the app.
 const CLIENT_NAMES = [
-  [/^claude-code$/i, 'Claude Code', 'claude-code'],
-  [/^claude-ai$|claude desktop/i, 'Claude Desktop', 'claude-desktop'],
-  [/cursor/i, 'Cursor', 'cursor'],
-  [/visual studio code|vscode|copilot/i, 'VS Code', 'vscode'],
+  [/^claude-code$/i, 'Claude Code'],
+  [/^claude-ai$|claude desktop/i, 'Claude Desktop'],
+  [/cursor/i, 'Cursor'],
+  [/visual studio code|vscode|copilot/i, 'VS Code'],
 ];
 
 const $ = (id) => document.getElementById(id);
 let settings = { ...DEFAULTS };
 let status = { state: 'off', agents: [] };
 let seen = {};
-let client = 'claude-code';
+let client = 'all';
 let lastDetected = null;
 
 function prettyClient(name) {
@@ -107,7 +107,7 @@ function renderSetup() {
       ? 'Connected right now.'
       : `Last connected ${relTime(known[0][1])}. It reconnects whenever you start a session` +
         (settings.enabled ? '.' : ' and the switch above is on.');
-    $('setupSummary').textContent = 'Set up another agent';
+    $('setupSummary').textContent = 'Setup and uninstall instructions';
   } else {
     $('setupSummary').textContent = 'Setup instructions';
     $('setupHint').textContent = settings.enabled
@@ -120,11 +120,6 @@ function renderSetup() {
   if (detected !== lastDetected) {
     $('setupFold').open = !detected;
     $('setupFold').classList.toggle('ag-fold-plain', !detected);
-    if (detected && !lastDetected) {
-      const first = live[0] || (known[0] && known[0][0]);
-      const tab = first && CLIENT_NAMES.find(([re]) => re.test(first));
-      if (tab) { client = tab[2]; renderSnippet(); }
-    }
     lastDetected = detected;
   }
   numberSteps();
@@ -140,54 +135,43 @@ function numberSteps() {
 
 // ---- Setup snippets --------------------------------------------------------
 
-// Every agent app is set up with `scorly install <app>`: it writes absolute
-// Node paths into the app's config (desktop apps don't get the shell's PATH,
-// so a pasted bare "npx" fails for nvm/Homebrew Node) and then starts the
-// server once to prove it works. `uninstall` reverses it and checks.
-const INSTALL_APPS = {
-  'claude-code': {
-    app: 'claude-code',
-    where: 'Run this once in a terminal. It adds Scorly to Claude Code for all your projects.',
-    after: 'Then start a new Claude Code session (in VS Code: reload the window).',
-  },
-  'claude-desktop': {
-    app: 'claude-desktop',
-    where: 'Run this once in a terminal. It adds Scorly to Claude Desktop\'s config and keeps a backup of the old one.',
-    after: 'Then fully quit Claude Desktop (⌘Q) and reopen it. In the chat, attach your project folder (+ → Add folder) so Claude can edit the code.',
-  },
-  cursor: {
-    app: 'cursor',
-    where: 'Run this once in a terminal. It adds Scorly to ~/.cursor/mcp.json and keeps a backup of the old one.',
-    after: 'Then reload Cursor and check scorly is enabled under Cursor Settings → MCP.',
-  },
-  vscode: {
-    app: 'vscode',
-    where: 'Run this in your project folder. It adds Scorly to .vscode/mcp.json (Copilot agent mode).',
-    after: 'Then run "MCP: List Servers" in VS Code and start scorly.',
-  },
-};
-
+// `scorly install` adds Scorly to every agent app it finds (Claude Code,
+// Claude Desktop, Cursor), writing absolute Node paths into each config
+// (desktop apps don't get the shell's PATH, so a pasted bare "npx" fails for
+// nvm/Homebrew Node), then starts the server once to prove it works.
+// `uninstall` reverses it everywhere and checks. VS Code's config is per
+// project, so it has its own command.
 function snippetFor(which, port) {
   const prefix = Number(port) !== DEFAULTS.port ? `SCORLY_PORT=${port} ` : '';
-  const target = INSTALL_APPS[which];
-  if (target) {
+  const verified = 'It lists each app it set up with ✔, then ends with ✔ Verified when Scorly starts, or ✘ and the reason. ';
+  if (which === 'vscode') {
     return {
-      where: target.where,
-      code: `${prefix}npx -y ${PACKAGE} install ${target.app}`,
-      after: 'It ends with ✔ Verified when Scorly starts correctly, or ✘ and the reason when it doesn\'t. ' + target.after,
-      remove: `npx -y ${PACKAGE} uninstall ${target.app}`,
+      where: 'Run this in your project folder. It adds Scorly to .vscode/mcp.json (Copilot agent mode).',
+      code: `${prefix}npx -y ${PACKAGE} install vscode`,
+      after: verified + 'Then run "MCP: List Servers" in VS Code and start scorly.',
+      remove: `npx -y ${PACKAGE} uninstall vscode`,
+      removeNote: 'To remove Scorly from this project, run this in the project folder. It confirms the entry is gone:',
+    };
+  }
+  if (which === 'cli') {
+    return {
+      where: 'No MCP? Run audits from a terminal or script instead:',
+      code: [
+        `${prefix}npx -y ${PACKAGE} audit http://localhost:3000 --save before.json`,
+        '# …make changes…',
+        `${prefix}npx -y ${PACKAGE} audit http://localhost:3000 --compare before.json`,
+      ].join('\n'),
+      after: 'Add --detail full for the complete report. Works in CI too (headless Chrome).',
+      remove: `npx -y ${PACKAGE} uninstall`,
+      removeNote: 'Nothing to remove for terminal use. This removes Scorly from every agent app it was added to:',
     };
   }
   return {
-    where: 'No MCP? Run audits from a terminal or script instead:',
-    code: [
-      `${prefix}npx -y ${PACKAGE} audit http://localhost:3000 --save before.json`,
-      '# …make changes…',
-      `${prefix}npx -y ${PACKAGE} audit http://localhost:3000 --compare before.json`,
-    ].join('\n'),
-    after: 'Add --detail full for the complete report. Works in CI too (headless Chrome).',
-    remove: `npx -y ${PACKAGE} uninstall all`,
-    removeNote: 'Nothing to remove for terminal use. This command removes Scorly from every agent app it was added to:',
+    where: 'Adds Scorly to every agent app on this computer (Claude Code, Claude Desktop and Cursor, whichever you have):',
+    code: `${prefix}npx -y ${PACKAGE} install`,
+    after: verified + 'Then restart those apps: a new Claude Code session; fully quit and reopen Claude Desktop or Cursor. Installed a new agent app later? Run it again.',
+    remove: `npx -y ${PACKAGE} uninstall`,
+    removeNote: 'To remove Scorly from every agent app, run this. It confirms each entry is gone:',
   };
 }
 
@@ -302,6 +286,7 @@ async function init() {
   $('reconnectBtn').addEventListener('click', reconnect);
 
   try { client = localStorage.getItem('scorly-agent-client') || client; } catch (err) { /* ignore */ }
+  if (!['all', 'vscode', 'cli'].includes(client)) client = 'all'; // saved from the old per-app tabs
   $('clientTabs').addEventListener('click', (e) => {
     const tab = e.target.closest('.ag-tab');
     if (!tab) return;

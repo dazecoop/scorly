@@ -114,7 +114,7 @@ async function main() {
     check('starts off', s.state === 'off', s.state);
     check('setup not detected yet, instructions open', !s.detected && s.setupOpen, JSON.stringify(s));
     check('three numbered steps', s.steps === '1,2,3', s.steps);
-    check('Claude Code install command shown', s.snippet === 'npx -y github:dazecoop/scorly install claude-code', s.snippet);
+    check('install-everywhere command shown', s.snippet === 'npx -y github:dazecoop/scorly install', s.snippet);
     check('page URL from the popup prefilled into the prompt', s.prompt.startsWith(`Use the Scorly MCP tool scorly_audit to audit ${url}.`) && s.prompt.includes('stop and tell me'), s.prompt);
 
     console.log('\n[1b] prompt builder');

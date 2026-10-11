@@ -6,7 +6,7 @@
 //   scorly compare <before.json> <after.json>
 //   scorly status
 //   scorly mcp
-//   scorly install <app> [--local]  ·  scorly uninstall <app|all>
+//   scorly install [app] [--local]  ·  scorly uninstall [app]
 
 const fs = require('fs');
 const { Bridge, DEFAULT_PORT } = require('./bridge');
@@ -27,9 +27,11 @@ Usage:
   scorly status                    Which agent apps have Scorly, and is the extension connected?
   scorly mcp                       Run as an MCP server over stdio
 
-  scorly install <app> [--local]   Add Scorly to an agent app and check it starts
-  scorly uninstall <app|all>       Remove it again and check it's gone
-      <app>: claude-code, claude-desktop, cursor, vscode (this project)
+  scorly install [app] [--local]   Add Scorly to every agent app on this computer
+                                   (or one: claude-code, claude-desktop, cursor,
+                                   vscode, or claude for both Claude apps)
+                                   and check it starts
+  scorly uninstall [app]           Remove it again (everywhere by default) and check it is gone
       --local: run this checkout instead of the GitHub copy
 
 Environment:

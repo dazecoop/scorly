@@ -48,12 +48,14 @@ Code, Cursor, Claude Desktop, VS Code) can audit a page, fix what it finds in
 your codebase, then re-audit and report how the score moved:
 
 ```
-npx -y github:dazecoop/scorly install claude-code      # or claude-desktop, cursor, vscode
-npx -y github:dazecoop/scorly uninstall claude-code    # or all
-npx -y github:dazecoop/scorly status                   # which apps have it, and does it start?
+npx -y github:dazecoop/scorly install      # every agent app found: Claude Code, Claude Desktop, Cursor
+npx -y github:dazecoop/scorly uninstall    # and back out of all of them
+npx -y github:dazecoop/scorly status       # which apps have it, and does it start?
 ```
 
-`install` writes absolute Node paths into the app's config (desktop apps
+Name an app to limit it (`install claude-code`, `install claude` for both
+Claude apps, `install vscode` in a project folder). `install` writes absolute
+Node paths into each app's config (desktop apps
 don't get your shell's PATH, so a bare `npx` fails for nvm/Homebrew
 installs), then starts the server once the way the app will and ends with
 ✔ Verified or ✘ and the reason. `uninstall` re-reads the config to confirm

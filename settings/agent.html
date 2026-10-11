@@ -69,13 +69,11 @@
 
     <details class="ag-fold" id="setupFold" open>
       <summary id="setupSummary">Setup instructions</summary>
-      <p class="ag-p">Pick your agent and run its command once. It needs <a href="https://nodejs.org" target="_blank" rel="noopener">Node.js 18+</a>; nothing else to install.</p>
+      <p class="ag-p">Run one command in a terminal. It needs <a href="https://nodejs.org" target="_blank" rel="noopener">Node.js 18+</a>; nothing else to install.</p>
       <div class="ag-tabs" role="tablist" id="clientTabs">
-        <button role="tab" class="ag-tab active" data-client="claude-code">Claude Code</button>
-        <button role="tab" class="ag-tab" data-client="claude-desktop">Claude Desktop</button>
-        <button role="tab" class="ag-tab" data-client="cursor">Cursor</button>
-        <button role="tab" class="ag-tab" data-client="vscode">VS Code</button>
-        <button role="tab" class="ag-tab" data-client="cli">Terminal</button>
+        <button role="tab" class="ag-tab active" data-client="all">All agent apps</button>
+        <button role="tab" class="ag-tab" data-client="vscode">VS Code project</button>
+        <button role="tab" class="ag-tab" data-client="cli">Terminal only</button>
       </div>
       <p class="ag-p ag-where" id="snippetWhere"></p>
       <div class="ag-code">
@@ -107,7 +105,7 @@
       <dt class="ag-res-ok">"Scorly MCP is working … The Scorly extension is not connected"</dt>
       <dd>Works, using headless Chrome. To use this browser (and your logins), turn the switch on above, wait up to 30 seconds and test again. If it still says this, check the port under Options matches your agent config.</dd>
       <dt class="ag-res-bad">"SCORLY NOT INSTALLED"</dt>
-      <dd>The agent didn't load Scorly. Run the setup command again and check it ends with ✔ Verified, then fully quit and reopen the agent app (a new chat isn't enough).</dd>
+      <dd>The app you're testing in didn't load Scorly. Check the install command listed this app with ✔ and ended with ✔ Verified, then fully quit and reopen the app (in VS Code, reload the window). An app installed after you ran the command needs the command run again. <code>npx -y github:dazecoop/scorly status</code> lists which apps have Scorly.</dd>
     </dl>
   </section>
 

@@ -27,25 +27,45 @@ const claudeDesktopFile = process.platform === 'darwin'
 // own `claude mcp` command and the file is only read, to verify.
 const TARGETS = {
   'claude-code': {
-    name: 'Claude Code', kind: 'claude-cli', file: path.join(os.homedir(), '.claude.json'), key: 'mcpServers',
-    after: 'Start a new Claude Code session (in VS Code: reload the window).',
+    name: 'Claude Code', kind: 'claude-cli', detect: () => commandExists('claude'), file: path.join(os.homedir(), '.claude.json'), key: 'mcpServers',
+    after: 'Start a new session (in VS Code: reload the window).',
     afterRemove: 'Start a new Claude Code session (in VS Code: reload the window).',
   },
   'claude-desktop': {
-    name: 'Claude Desktop', kind: 'json', file: claudeDesktopFile, key: 'mcpServers',
-    after: 'Fully quit Claude Desktop (⌘Q) and reopen it; a new chat is not enough.',
+    name: 'Claude Desktop', kind: 'json', file: claudeDesktopFile,
+    detect: () => fs.existsSync(path.dirname(claudeDesktopFile)) || appExists('Claude'), key: 'mcpServers',
+    after: 'Fully quit it (⌘Q) and reopen it; a new chat is not enough. Attach your project folder in the chat (+ → Add folder).',
     afterRemove: 'Fully quit Claude Desktop (⌘Q) and reopen it.',
   },
   cursor: {
-    name: 'Cursor', kind: 'json', file: path.join(os.homedir(), '.cursor', 'mcp.json'), key: 'mcpServers',
-    after: 'Reload Cursor, then check scorly is enabled under Cursor Settings → MCP.',
+    name: 'Cursor', kind: 'json', file: path.join(os.homedir(), '.cursor', 'mcp.json'),
+    detect: () => fs.existsSync(path.join(os.homedir(), '.cursor')) || appExists('Cursor'), key: 'mcpServers',
+    after: 'Reload it, then check scorly is enabled under Cursor Settings → MCP.',
     afterRemove: 'Reload Cursor.',
   },
   vscode: {
-    name: 'VS Code (this project)', kind: 'json', file: path.join(process.cwd(), '.vscode', 'mcp.json'), key: 'servers', stdioType: true,
+    // Per project, so never part of "every app": run it in the project folder.
+    name: 'VS Code (this project)', kind: 'json', perProject: true, file: path.join(process.cwd(), '.vscode', 'mcp.json'), key: 'servers', stdioType: true,
     after: 'In VS Code, run "MCP: List Servers" and start scorly.',
     afterRemove: 'Reload the VS Code window.',
   },
+};
+
+function commandExists(cmd) {
+  const r = spawnSync(process.platform === 'win32' ? 'where' : 'which', [cmd], { encoding: 'utf8' });
+  return r.status === 0;
+}
+
+function appExists(name) {
+  return process.platform === 'darwin' &&
+    [path.join('/Applications', name + '.app'), path.join(os.homedir(), 'Applications', name + '.app')].some((p) => fs.existsSync(p));
+}
+
+// `install` with no app, or `all`: every app found on this computer.
+// `claude`: both Claude apps. Otherwise one named app.
+const GROUPS = {
+  all: () => Object.keys(TARGETS).filter((k) => !TARGETS[k].perProject),
+  claude: () => ['claude-code', 'claude-desktop'],
 };
 
 const ok = (m) => console.log('✔ ' + m);
@@ -172,74 +192,114 @@ function verifyEntry(entry, { timeoutMs = 120000 } = {}) {
   });
 }
 
-function reportFailure(result, entry, app) {
-  bad(`…but the server failed to start: ${result.error}.`);
+function reportFailure(result, entry) {
+  bad(`The Scorly MCP server failed to start: ${result.error}.`);
   if (result.stderr) result.stderr.split('\n').forEach((l) => info('│ ' + l));
   if ((entry.args || []).includes(PACKAGE) && /could not determine executable|404|not found/i.test(result.stderr + result.error)) {
     info(`The GitHub copy of Scorly (${PACKAGE}) doesn't include the agent tool yet.`);
   }
-  info(`The entry was left in place so you can see it; run \`scorly uninstall ${app}\` to remove it.`);
 }
 
 // ---- Commands --------------------------------------------------------------
 
-function targetOrThrow(app, verb) {
-  const target = TARGETS[app];
-  if (!target) {
-    throw new Error(`Usage: scorly ${verb} <${Object.keys(TARGETS).join('|')}${verb === 'uninstall' ? '|all' : ''}>` +
-      (verb === 'install' ? ' [--local]' : ''));
-  }
-  return target;
+function resolveApps(app, verb) {
+  const name = app || 'all';
+  if (GROUPS[name]) return { keys: GROUPS[name](), group: name };
+  if (TARGETS[name]) return { keys: [name], group: null };
+  throw new Error(`Usage: scorly ${verb} [${Object.keys(TARGETS).join('|')}|claude|all]` +
+    (verb === 'install' ? ' [--local]' : '') + `\nWith no app, ${verb === 'install' ? 'installs in' : 'removes from'} every agent app on this computer.`);
 }
 
+// Writes the entry into each app, then verifies the server starts. All apps
+// get the same command, so it is started once and the result shared.
 async function install(app, { local = false } = {}) {
-  const target = targetOrThrow(app, 'install');
-  const existed = !!readEntry(target);
-  const entry = mcpEntry({ local, stdioType: target.stdioType });
-  setEntry(target, entry);
+  const { keys, group } = resolveApps(app, 'install');
+  if (group) console.log(`Installing Scorly in ${group === 'claude' ? 'the Claude apps' : 'every agent app'} found on this computer:`);
 
-  if (!readEntry(target)) {
-    bad(`Couldn't add Scorly to ${target.name}: the entry isn't in ${target.file} after writing it.`);
+  const written = [];
+  let failed = false;
+  for (const key of keys) {
+    const target = TARGETS[key];
+    if (group && target.detect && !target.detect()) {
+      console.log(`· ${target.name}: not found on this computer, skipped`);
+      continue;
+    }
+    const entry = mcpEntry({ local, stdioType: target.stdioType });
+    try {
+      const existed = !!readEntry(target);
+      setEntry(target, entry);
+      if (!readEntry(target)) throw new Error(`the entry isn't in ${target.file} after writing it`);
+      ok(`${target.name}: ${existed ? 'updated' : 'added'} (${target.file})`);
+      written.push({ key, target, entry });
+    } catch (err) {
+      bad(`${target.name}: couldn't add Scorly. ${err.message}`);
+      failed = true;
+    }
+  }
+  if (!written.length) {
+    if (!failed) bad('No agent apps found. Install Claude Code, Claude Desktop or Cursor first, or name the app: scorly install claude-code');
     return false;
   }
-  ok(`${existed ? 'Updated' : 'Added'} Scorly in ${target.name} (${target.file})${local ? ', running this checkout' : ''}.`);
-  if (target.kind === 'json' && fs.existsSync(target.file + '.scorly-backup')) info(`Previous config saved as ${path.basename(target.file)}.scorly-backup`);
 
+  console.log('');
   info(local ? 'Checking it starts…' : 'Checking it starts (the first run downloads Scorly, which can take a minute)…');
-  const result = await verifyEntry(entry);
-  if (!result.ok) {
-    reportFailure(result, entry, app);
+  const results = new Map();
+  for (const w of written) {
+    const sig = JSON.stringify({ c: w.entry.command, a: w.entry.args, e: w.entry.env });
+    if (!results.has(sig)) results.set(sig, await verifyEntry(w.entry));
+    w.result = results.get(sig);
+  }
+  const broken = written.filter((w) => !w.result.ok);
+  if (broken.length) {
+    reportFailure(broken[0].result, broken[0].entry);
+    info(`Not working in: ${broken.map((w) => w.target.name).join(', ')}. The entries were left in place; ` +
+      `\`scorly uninstall${group ? '' : ' ' + broken[0].key}\` removes them.`);
     return false;
   }
-  ok(`Verified: the Scorly MCP server starts and offers ${result.tools.filter((t) => t.startsWith('scorly_')).join(', ')}.`);
-  info(`Next: ${target.after}`);
+  const tools = written[0].result.tools.filter((t) => t.startsWith('scorly_')).join(', ');
+  ok(`Verified: the Scorly MCP server starts and offers ${tools}.`);
+  console.log('');
+  console.log('Next:');
+  written.forEach((w) => info(`• ${w.target.name}: ${w.target.after}`));
   info('Then paste the "Test it" prompt from Scorly\'s AI agents settings into a new session.');
-  return true;
+  return !failed;
 }
 
 async function uninstall(app) {
-  if (app === 'all') {
-    let all = true;
-    for (const key of Object.keys(TARGETS)) {
-      if (TARGETS[key].kind === 'claude-cli' || readEntry(TARGETS[key])) all = (await uninstall(key)) && all;
+  const { keys, group } = resolveApps(app, 'uninstall');
+  let allOk = true;
+  const removed = [];
+  for (const key of keys) {
+    const target = TARGETS[key];
+    let had;
+    try { had = !!readEntry(target); } catch (e) { bad(`${target.name}: ${e.message}`); allOk = false; continue; }
+    if (!had) {
+      console.log(`· ${target.name}: Scorly isn't installed, nothing to remove`);
+      continue;
     }
-    return all;
+    try {
+      setEntry(target, null);
+    } catch (e) {
+      bad(`${target.name}: ${e.message}`);
+      allOk = false;
+      continue;
+    }
+    if (readEntry(target)) {
+      bad(`${target.name}: Scorly is still in ${target.file} after removing it. Remove the "${SERVER_NAME}" entry by hand.`);
+      allOk = false;
+      continue;
+    }
+    ok(`${target.name}: removed. Verified: no "${SERVER_NAME}" entry left in ${target.file}`);
+    removed.push(target);
   }
-  const target = targetOrThrow(app, 'uninstall');
-  let had;
-  try { had = !!readEntry(target); } catch (e) { bad(e.message); return false; }
-  if (!had) {
-    ok(`Scorly isn't installed in ${target.name}. Nothing to remove.`);
-    return true;
+  if (removed.length) {
+    console.log('');
+    console.log('Next:');
+    removed.forEach((t) => info(`• ${t.name}: ${t.afterRemove}`));
+  } else if (allOk && group) {
+    ok('Scorly isn\'t installed in any agent app.');
   }
-  setEntry(target, null);
-  if (readEntry(target)) {
-    bad(`Scorly is still in ${target.file} after removing it. Remove the "${SERVER_NAME}" entry by hand.`);
-    return false;
-  }
-  ok(`Removed Scorly from ${target.name}. Verified: no "${SERVER_NAME}" entry left in ${target.file}.`);
-  info(`Next: ${target.afterRemove}`);
-  return true;
+  return allOk;
 }
 
 // One line per app: configured or not, and whether the configured server
@@ -256,7 +316,7 @@ async function checkAll() {
     const result = await verifyEntry(entry, { timeoutMs: 60000 });
     lines.push(result.ok
       ? `✔ ${target.name}: installed, server starts`
-      : `✘ ${target.name}: installed, but the server fails to start (${result.error}). Run \`scorly install ${Object.keys(TARGETS).find((k) => TARGETS[k] === target)}\` again.`);
+      : `✘ ${target.name}: installed, but the server fails to start (${result.error}). Run \`scorly install\` again.`);
   }
   return lines;
 }

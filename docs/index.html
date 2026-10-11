@@ -39,7 +39,7 @@ depth, shows how it will look when shared, and diffs the version you're
 building against the one that's already live.</p>
 
 <img class="hero" src="social-preview.png" width="1600" height="800"
-     alt="The Scorly panel open over a web page, showing an overall SEO score of 97 with per-category bars for Technical, Content, Perf, Schema, Security, Mobile, AI SEO and E-E-A-T, issue counts, and a SERP preview.">
+     alt="The Scorly popup open over a blog post, showing an overall score of 94 with bars for Technical, Content, Perf, Schema, Security, Mobile, Accessibility, AI Visibility and E-E-A-T.">
 <p class="caption">One score, nine categories, and the checks underneath each one.</p>
 
 <p>Click the icon and Scorly reads the page you're already on — no URL to paste,
@@ -54,15 +54,6 @@ private-network URLs too, where most SEO tools simply refuse to run.</p>
   <li>MIT licensed</li>
   <li>Works with AI agents</li>
 </ul>
-
-<div class="note">
-  <strong>New: let your AI agent fix it.</strong> Scorly also runs as an MCP
-  server and CLI. Claude Code, Claude Desktop, Cursor or VS Code can audit a
-  page, fix what Scorly finds in your code, then re-audit to show the score
-  moved. One command sets it up:
-  <code>npx -y github:dazecoop/scorly install</code>.
-  <a href="agents.html">How it works →</a>
-</div>
 
 <h2>Scores the whole page, not just the title tag</h2>
 <p>One overall score from 0&ndash;100, broken into nine categories — Technical,
@@ -83,6 +74,10 @@ a bare number you have to take on trust.</p>
 made of — crawler access, machine readability, trust signals, freshness,
 human-written copy and build quality — as one bar each. Click a bar to jump to
 the section that explains it.</p>
+
+<img class="hero" src="preview-ai-insights.png" width="1600" height="800" loading="lazy"
+     alt="Scorly's AI Insights tab: an AI Visibility score of 88 broken into crawler access, machine readability, trust signals, freshness, human-written copy and build quality, with a note that it is computed locally with no AI involved.">
+<p class="caption">Six bars, each one a section you can open. All heuristics, computed on the page itself.</p>
 
 <h2>Flags copy that reads as unedited AI output</h2>
 <p>Fifteen families of surface tell, taken from Wikipedia's
@@ -130,6 +125,10 @@ each, makes the fixes in your codebase, re-audits, and tells you what moved. Tur
 the extension's agent switch and audits run in your own browser, logins included.
 Or use the same audits from a terminal or CI, with colour-coded reports.
 <a href="agents.html">Set it up in one command</a>.</p>
+
+<img class="hero" src="preview-ai-agents.png" width="1600" height="800" loading="lazy"
+     alt="A terminal running a Scorly re-audit of localhost:3000: category score bars, then the change since the previous audit, with the overall score up from 84 to 88 and five checks now passing.">
+<p class="caption">A re-audit after fixes: what moved, and which checks now pass.</p>
 
 <h2>Measures real performance</h2>
 <p>TTFB, request count and transferred size come straight from the browser's own

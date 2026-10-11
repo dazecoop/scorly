@@ -16,19 +16,11 @@ nothing is sent to a remote server.
 It works on `localhost` and private-network URLs too, where most SEO tools
 simply refuse to run.
 
-> **New: let your AI agent fix it.** Scorly also runs as an MCP server and
-> CLI. Claude Code, Claude Desktop, Cursor or VS Code can audit a page, fix
-> what Scorly finds in your code, then re-audit and tell you how the score
-> moved. One command sets it up:
->
-> ```
-> npx -y github:dazecoop/scorly install
-> ```
->
-> Then ask: *"Use the Scorly MCP tools to audit http://localhost:3000, fix the
-> issues you can, then re-audit and tell me what improved."*
-> [How it works](#ai-agents-mcp-server-and-cli) ·
-> [full guide](https://dazecoop.github.io/scorly/agents.html)
+Your AI coding agent can use it too. Scorly includes a local MCP server and
+command-line tool, so Claude Code, Claude Desktop, Cursor or VS Code can audit
+a page, fix what Scorly finds in your code, then re-audit and tell you how the
+score moved. It all runs on your own computer, with the same checks as the
+extension. See [AI agents](#ai-agents-mcp-server-and-cli) below.
 
 ### Compare localhost against live
 
@@ -57,10 +49,14 @@ press Save.
 
 ## AI agents: MCP server and CLI
 
+<img alt="A terminal running a Scorly re-audit of localhost:3000: category score bars, then the change since the previous audit, with the overall score up from 84 to 88 and five checks now passing" src="docs/preview-ai-agents.png" />
+
 The same audits the extension runs are available to AI coding agents over
 MCP, and to scripts and CI from a terminal. The audit and scoring code is the
 extension's own, loaded unchanged, so an agent sees exactly the verdicts the
-popup shows.
+popup shows. The MCP server runs on your own computer: there's no Scorly
+server, account or API key. The full guide is at
+[dazecoop.github.io/scorly/agents.html](https://dazecoop.github.io/scorly/agents.html).
 
 ### Set up
 
@@ -150,6 +146,8 @@ crawler access, machine readability, trust signals, freshness, human-written
 copy and build quality — as one bar each. Click a bar to jump to the section
 that explains it. Every bar shows the same number as the section it opens,
 and all six read the same way round: higher is better.
+
+<img alt="Scorly's AI Insights tab: an AI Visibility score of 88 broken into six bars, computed locally with no AI involved" src="docs/preview-ai-insights.png" />
 
 **Flags copy that reads as unedited AI output.** Fifteen families of surface
 tell, taken from Wikipedia's [Signs of AI

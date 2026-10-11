@@ -61,8 +61,8 @@ installs), then starts the server once the way the app will and ends with
 ✔ Verified or ✘ and the reason. `uninstall` re-reads the config to confirm
 the entry is gone.
 
-> "Use the Scorly MCP tool scorly_audit to audit http://localhost:3000, fix
-> the issues you can, then re-audit and tell me what improved."
+> "Use the Scorly MCP tools to audit http://localhost:3000, fix the issues
+> you can, then re-audit and tell me what improved."
 
 The agent gets `scorly_audit` (scores plus every failing check and warning,
 with the reason), `scorly_compare` (the same diff engine as the Compare view)

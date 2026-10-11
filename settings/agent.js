@@ -208,13 +208,16 @@ function renderPrompt() {
   const target = normalizeUrl($('auditUrl').value) || DEFAULT_AUDIT_URL;
   const other = normalizeUrl($('compareUrl').value);
   // Names the tool outright: told only "use Scorly", an agent without the
-  // MCP server goes looking for a browser extension instead of saying so.
-  const guard = ' If you don\'t have the scorly_audit tool, stop and tell me instead of using a browser.';
+  // tool goes looking for a browser extension. Desktop agents also prefix MCP
+  // tool names (mcp__scorly__…) and load tools on demand, so the prompt says
+  // to search before concluding it's missing.
+  const find = 'Use the Scorly MCP tools (scorly_audit, scorly_compare; names may have a prefix like mcp__scorly__, and if your tools load on demand, search your tools for "scorly" first). ';
+  const guard = ' If no Scorly tool exists after searching, stop and tell me instead of using a browser.';
   $('promptExample').textContent = other
-    ? `Use the Scorly MCP tools to audit ${target} and ${other} (scorly_audit), and compare them (scorly_compare). ` +
+    ? find + `Audit ${target} and ${other} and compare them. ` +
       `Fix the issues on ${target} that you can in this codebase, most severe first. ` +
       `Then re-audit ${target} and tell me how its score changed, what you fixed, and what still differs from ${other}.` + guard
-    : `Use the Scorly MCP tool scorly_audit to audit ${target}. Fix the issues you can in this codebase, most severe first. ` +
+    : find + `Audit ${target}. Fix the issues you can in this codebase, most severe first. ` +
       `Then re-audit it and tell me how the score changed and what you fixed.` + guard;
 }
 

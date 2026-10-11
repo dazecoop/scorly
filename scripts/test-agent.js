@@ -115,18 +115,18 @@ async function main() {
     check('setup not detected yet, instructions open', !s.detected && s.setupOpen, JSON.stringify(s));
     check('three numbered steps', s.steps === '1,2,3', s.steps);
     check('install-everywhere command shown', s.snippet === 'npx -y github:dazecoop/scorly install', s.snippet);
-    check('page URL from the popup prefilled into the prompt', s.prompt.startsWith(`Use the Scorly MCP tool scorly_audit to audit ${url}.`) && s.prompt.includes('stop and tell me'), s.prompt);
+    check('page URL from the popup prefilled into the prompt', s.prompt.includes(`Audit ${url}.`) && s.prompt.includes('search your tools for "scorly"') && s.prompt.includes('stop and tell me'), s.prompt);
 
     console.log('\n[1b] prompt builder');
     await typeInto(settings, '#auditUrl', 'localhost:5173/pricing');
     await typeInto(settings, '#compareUrl', 'example.com/pricing');
     s = await statusText(settings);
     check('URLs normalised into the compare prompt',
-      s.prompt.includes('audit http://localhost:5173/pricing and https://example.com/pricing (scorly_audit), and compare them (scorly_compare)') &&
+      s.prompt.includes('Audit http://localhost:5173/pricing and https://example.com/pricing and compare them') &&
       s.prompt.includes('still differs from https://example.com/pricing'), s.prompt);
     await typeInto(settings, '#compareUrl', ' ');
     s = await statusText(settings);
-    check('clearing the comparison falls back to the single-page prompt', !s.prompt.includes('scorly_compare') && s.prompt.includes('http://localhost:5173/pricing'), s.prompt);
+    check('clearing the comparison falls back to the single-page prompt', !s.prompt.includes('compare them') && s.prompt.includes('http://localhost:5173/pricing'), s.prompt);
     await settings.screenshot({ path: path.join(OUT_DIR, 'agent-settings-setup.png'), fullPage: true });
 
     console.log('\n[2] custom port + switch on, no agent yet');

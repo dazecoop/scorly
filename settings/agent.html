@@ -96,7 +96,7 @@
     <h2 class="ag-h2"><span class="ag-step" data-step></span> Test it</h2>
     <p class="ag-p">Start a new session in your agent and paste this. It only checks that the agent can see Scorly; nothing is audited or changed.</p>
     <div class="ag-code">
-      <pre id="testPrompt">Call the scorly_status tool and reply with exactly what it returns. If you don't have a tool called scorly_status, reply only with: SCORLY NOT INSTALLED</pre>
+      <pre id="testPrompt">Find the Scorly MCP server's scorly_status tool. Its name may have a prefix, like mcp__scorly__scorly_status, and if your tools load on demand, search your tools for "scorly" first. Call it and reply with exactly what it returns. Only if no Scorly tool exists after searching, reply with: SCORLY NOT INSTALLED</pre>
       <button class="btn btn-ghost ag-copy" data-copy="testPrompt">Copy</button>
     </div>
     <dl class="ag-results">

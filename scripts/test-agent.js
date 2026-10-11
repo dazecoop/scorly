@@ -11,6 +11,9 @@
  */
 const path = require('path');
 const fs = require('fs');
+// Keep the bridge's state file (extension last seen / switched off) away
+// from the real ~/.scorly, for this process and the MCP servers it spawns.
+process.env.SCORLY_STATE_DIR = path.join(__dirname, 'output', 'agent-state');
 const puppeteer = require('puppeteer');
 const { serveDemoPage } = require('./lib/serve-demo-page');
 const { findExtensionId } = require('./lib/extension-id');
@@ -185,6 +188,30 @@ async function main() {
     check('settings lists both agents', s.sub.includes('test-agent') && s.sub.includes('second-agent'), s.sub);
     await peer.close();
 
+    console.log('\n[6b] Stop from the popup closes the bridge');
+    const popup = await browser.newPage();
+    await popup.setViewport({ width: 500, height: 600 });
+    await popup.goto(`chrome-extension://${extId}/popup/popup.html`, { waitUntil: 'load' });
+    const strip = await waitFor(() => popup.evaluate(() => {
+      const el = document.getElementById('agentStrip');
+      return !el.classList.contains('hidden') && document.getElementById('agentStripText').textContent;
+    }), 5000, 'agent strip').catch(() => '');
+    check('popup shows the agent strip while connected', strip.includes('test-agent'), strip);
+    await popup.click('#agentStopBtn');
+    const stopped = await waitFor(() => bridge.mode === 'none', 5000, 'bridge stop').catch(() => false);
+    check('Stop closed the agent\'s bridge', stopped, bridge.mode);
+    check('bridge knows it was stopped by the user', bridge.stopReason === 'stopped', bridge.stopReason);
+    const hidden = await waitFor(() => popup.evaluate(() => document.getElementById('agentStrip').classList.contains('hidden')), 5000, 'strip hidden').catch(() => false);
+    check('popup strip disappears', hidden);
+    s = await statusText(settings);
+    check('settings back to On · idle', s.state === 'waiting' && s.title.includes('idle'), s.title);
+    await popup.close();
+
+    // The agent's next audit reopens the bridge; Retry now skips the 30s alarm.
+    await bridge.use();
+    await settings.evaluate(() => document.getElementById('reconnectBtn').click());
+    check('next use reopens the bridge and the extension reconnects', await bridge.waitForExtension(10000));
+
     console.log('\n[7] localhost-only restriction');
     await settings.evaluate(() => document.querySelectorAll('details.ag-fold-card').forEach((d) => { d.open = true; }));
     await settings.click('#localhostOnly');
@@ -205,6 +232,13 @@ async function main() {
     s = await statusText(settings);
     check('extension disconnected and shows Off', s.state === 'off', s.state);
     check('setup stays detected after switching off', s.detected, JSON.stringify(s));
+    console.log('\n[9] an unused bridge closes itself');
+    const idle = new Bridge({ port: PORT + 1, client: 'idle-test', idleMs: 1200 });
+    await idle.use();
+    check('opened on use', idle.mode === 'hub', idle.mode);
+    await new Promise((r) => setTimeout(r, 2000));
+    check('closed after the idle time', idle.mode === 'none' && idle.stopReason === 'idle', `${idle.mode}/${idle.stopReason}`);
+    await idle.close();
   } finally {
     if (bridge) await bridge.close();
     await engine.closeHeadless();

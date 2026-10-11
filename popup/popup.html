@@ -30,6 +30,13 @@
     </div>
   </header>
 
+  <!-- Shown only while an AI agent's bridge is open (see initAgentButton). -->
+  <div id="agentStrip" class="agent-strip hidden" data-busy="false">
+    <span class="agent-strip-dot"></span>
+    <span class="agent-strip-text" id="agentStripText"></span>
+    <button id="agentStopBtn" class="agent-stop-btn" title="Close the agent's bridge now. It opens again on the agent's next audit; the switch stays on.">Stop</button>
+  </div>
+
   <div id="loadingState" class="state-pane skeleton-pane">
     <div class="sk sk-url"></div>
     <div class="sk-row">
@@ -266,6 +273,7 @@
 <script src="inpage-analyzer.js"></script>
 <script src="analyze.js"></script>
 <script src="snapshots.js"></script>
+<script src="agent-names.js"></script>
 <script src="scoring.js"></script>
 <script src="render.js"></script>
 <script src="export.js"></script>

@@ -165,3 +165,5 @@ a { color: var(--accent); }
 .ag-remove > summary { cursor: pointer; color: var(--text-muted); font-size: 13.5px; font-weight: 600; }
 .ag-remove[open] > summary { margin-bottom: 6px; }
 .ag-remove .ag-muted { margin-top: 0; }
+.ag-stop { color: var(--fail); }
+.ag-stop:hover { border-color: var(--fail); }

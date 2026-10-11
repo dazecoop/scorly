@@ -6,6 +6,11 @@
 // session, a one-off CLI run) connects as a peer and has its audits relayed
 // through the hub. If the hub exits, a peer takes its place.
 //
+// The bridge is opened on demand: an agent process opens it when an audit
+// needs the browser and closes it again after IDLE_MS without use, or at
+// once when the user presses Stop in the extension. The MCP process itself
+// keeps running (the agent app owns it), but holds no port while idle.
+//
 // Only two kinds of client are accepted:
 //   - the extension, whose Origin is chrome-extension:// or moz-extension://
 //   - local processes, which send no Origin at all
@@ -17,6 +22,7 @@
 //   agent → hub       {type:'hello', role:'agent', client}
 //   hub → extension   {type:'agents', clients} · {type:'audit', id, url} · {type:'ping'}
 //   extension → hub   {type:'result', id, data, origin} · {type:'error', id, message} · {type:'pong'}
+//                     {type:'shutdown'} (the user pressed Stop) · {type:'goodbye'} (switch turned off)
 //   agent ⇄ hub       {type:'audit', id, url} → {type:'result'|'error', id, …}
 //                     {type:'status', id} → {type:'status', id, extension, agents}
 
@@ -27,7 +33,10 @@ const { WebSocketServer, WebSocket } = require('ws');
 
 const DEFAULT_PORT = 47615;
 const AUDIT_TIMEOUT_MS = 90000;
-const STATE_FILE = path.join(os.homedir(), '.scorly', 'bridge.json');
+// Long enough that an agent's audit → fix → re-audit loop keeps the bridge
+// (and the extension's connection) warm between audits.
+const IDLE_MS = 10 * 60 * 1000;
+const STATE_FILE = path.join(process.env.SCORLY_STATE_DIR || path.join(os.homedir(), '.scorly'), 'bridge.json');
 
 function readState() {
   try { return JSON.parse(fs.readFileSync(STATE_FILE, 'utf8')); } catch (e) { return {}; }
@@ -44,8 +53,11 @@ let nextId = 1;
 const newId = () => 'r' + (nextId++) + '-' + process.pid;
 
 class Bridge {
-  constructor({ port = DEFAULT_PORT, client = 'scorly-cli' } = {}) {
+  constructor({ port = DEFAULT_PORT, client = 'scorly-cli', idleMs = IDLE_MS } = {}) {
     this.port = port;
+    this.idleMs = idleMs;
+    this.idleTimer = null;
+    this.stopReason = null;
     this.client = client;
     this.mode = 'none';          // 'hub' | 'peer' | 'none'
     this.server = null;
@@ -57,9 +69,31 @@ class Bridge {
     this.closed = false;
   }
 
+  // Opens the bridge if it isn't open, and restarts the idle countdown.
+  // Every use of the bridge goes through here.
+  async use() {
+    if (this.mode === 'none') {
+      if (!this.starting) this.starting = this.start().finally(() => { this.starting = null; });
+      await this.starting;
+    }
+    this.touch();
+  }
+
+  touch() {
+    clearTimeout(this.idleTimer);
+    if (this.mode === 'none' || this.closed) return;
+    this.idleTimer = setTimeout(() => {
+      // Never close under an audit that is still running.
+      if (this.pending.size) this.touch();
+      else this.stop('idle');
+    }, this.idleMs);
+    if (this.idleTimer.unref) this.idleTimer.unref();
+  }
+
   // Becomes the hub if the port is free, otherwise a peer of the existing one.
   async start() {
     if (this.closed) return;
+    this.stopReason = null;
     try {
       await this.listen();
       this.mode = 'hub';
@@ -118,10 +152,20 @@ class Bridge {
       this.extensionWaiters.splice(0).forEach((fn) => fn());
       return;
     }
+    if (msg.type === 'shutdown') {
+      this.stop('stopped');
+      return;
+    }
+    if (msg.type === 'goodbye') {
+      // Switch turned off: don't make the next audits wait for it.
+      writeState({ extensionDisabledAt: new Date().toISOString() });
+      return;
+    }
     if (msg.type === 'result' || msg.type === 'error') this.settle(msg);
   }
 
   onAgentMessage(ws, msg) {
+    this.touch(); // a peer's audits keep the hub open too
     if (msg.type === 'hello') {
       this.agents.set(ws, String(msg.client || 'agent').slice(0, 60));
       this.broadcastAgents();
@@ -157,9 +201,9 @@ class Bridge {
         if (this.upstream !== ws) return;
         this.upstream = null;
         this.mode = 'none';
-        this.failPending('Lost the connection to the Scorly bridge.');
-        // The hub went away: take over (or rejoin whoever did).
-        if (!this.closed) setTimeout(() => this.start().catch(() => {}), 500 + Math.random() * 500);
+        clearTimeout(this.idleTimer);
+        this.failPending('The Scorly bridge closed (stopped from the extension, or idle).');
+        // No automatic takeover: the next audit reopens the bridge.
       });
     });
   }
@@ -248,21 +292,42 @@ class Bridge {
     return { data: r.data, origin: r.origin };
   }
 
+  // Closes the bridge (port, extension and peer connections); `use()` opens
+  // it again. reason: 'idle' | 'stopped' (Stop pressed in the extension).
+  async stop(reason = 'idle') {
+    clearTimeout(this.idleTimer);
+    clearInterval(this.pingTimer);
+    this.stopReason = reason;
+    this.failPending(reason === 'stopped'
+      ? 'Stopped from the Scorly extension.'
+      : 'The Scorly bridge closed.');
+    const upstream = this.upstream;
+    const server = this.server;
+    this.upstream = null;
+    this.server = null;
+    this.extension = null;
+    this.agents.clear();
+    this.mode = 'none';
+    if (upstream) { try { upstream.close(); } catch (e) { /* ignore */ } }
+    if (server) {
+      for (const ws of server.clients) { try { ws.terminate(); } catch (e) { /* ignore */ } }
+      await new Promise((r) => server.close(() => r()));
+    }
+  }
+
+  // Final: the process is exiting.
   async close() {
     this.closed = true;
-    clearInterval(this.pingTimer);
-    this.failPending('Bridge closed.');
-    if (this.upstream) { try { this.upstream.close(); } catch (e) { /* ignore */ } }
-    if (this.server) {
-      for (const ws of this.server.clients) { try { ws.terminate(); } catch (e) { /* ignore */ } }
-      await new Promise((r) => this.server.close(() => r()));
-    }
+    await this.stop('closed');
   }
 }
 
 // Was the extension seen recently enough that waiting for it is worthwhile?
 function extensionRecentlySeen(days = 14) {
-  const seen = Date.parse(readState().extensionLastSeen || '');
+  const state = readState();
+  const seen = Date.parse(state.extensionLastSeen || '');
+  const disabled = Date.parse(state.extensionDisabledAt || '');
+  if (Number.isFinite(disabled) && disabled > seen) return false;
   return Number.isFinite(seen) && Date.now() - seen < days * 86400000;
 }
 

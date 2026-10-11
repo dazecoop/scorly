@@ -9,8 +9,9 @@
 // result back over that local socket. Scoring happens on the agent's side
 // with the same scoring.js.
 //
-// The worker is woken by an alarm every ~30s to reconnect while no agent is
-// running, so turning an agent on is picked up without opening the popup.
+// Agents open their end only while they're auditing (and close it after 10
+// idle minutes), so the worker is woken by an alarm every ~30s to look for
+// it, and the popup's Stop button can close it early.
 
 if (typeof scorlyAnalyzeUrlInBackgroundTab === 'undefined' && typeof importScripts === 'function') {
   // Chrome service worker. Firefox lists these in manifest background.scripts.
@@ -155,6 +156,7 @@ async function agentApply() {
     agentConnect();
   } else {
     agentApi.alarms.clear(SCORLY_AGENT_ALARM);
+    agentSend({ type: 'goodbye', reason: 'disabled' });
     agentDisconnect();
     // Off leaves nothing behind in storage; the UI reads a missing record as off.
     agentStatus = { state: 'off', agents: [] };
@@ -178,6 +180,9 @@ agentApi.storage.onChanged.addListener((changes, area) => {
 // user isn't left waiting up to 30s for the next alarm.
 agentApi.runtime.onMessage.addListener((msg) => {
   if (msg && msg.type === 'scorly-agent-reconnect') agentLoadSettings().then(agentConnect);
+  // Stop button (popup / settings): the agent's bridge closes now and opens
+  // again on its next audit. The switch stays on.
+  if (msg && msg.type === 'scorly-agent-stop') agentSend({ type: 'shutdown' });
 });
 
 agentApply();

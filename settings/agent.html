@@ -46,6 +46,7 @@
         <div class="ag-status-sub" id="statusSub"></div>
       </div>
       <button class="btn btn-ghost ag-reconnect hidden" id="reconnectBtn">Retry now</button>
+      <button class="btn btn-ghost ag-reconnect ag-stop hidden" id="stopBtn" title="Close the agent's bridge now. It opens again on the agent's next audit; the switch stays on.">Stop</button>
     </div>
 
     <div class="ag-last hidden" id="lastAudit"></div>
@@ -103,7 +104,7 @@
       <dt class="ag-res-ok">"Scorly MCP is working … Audits run in the user's browser"</dt>
       <dd>All set: audits run in this browser. The status at the top of this page also shows Connected.</dd>
       <dt class="ag-res-ok">"Scorly MCP is working … The Scorly extension is not connected"</dt>
-      <dd>Works, using headless Chrome. To use this browser (and your logins), turn the switch on above, wait up to 30 seconds and test again. If it still says this, check the port under Options matches your agent config.</dd>
+      <dd>Works, using headless Chrome. To use this browser (and your logins), turn the switch on above and test again; it can take up to 30 seconds to connect. If it still says this, check the port under Options matches your agent config.</dd>
       <dt class="ag-res-bad">"SCORLY NOT INSTALLED"</dt>
       <dd>The app you're testing in didn't load Scorly. Check the install command listed this app with ✔ and ended with ✔ Verified, then fully quit and reopen the app (in VS Code, reload the window). An app installed after you ran the command needs the command run again. <code>npx -y github:dazecoop/scorly status</code> lists which apps have Scorly.</dd>
     </dl>
@@ -136,8 +137,8 @@
     <div class="ag-info">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
       <div>
-        <strong>Still local-only.</strong> With the switch on, Scorly keeps one connection open to
-        <code id="infoAddr">ws://127.0.0.1:47615</code>, on this computer, where only Scorly's agent tool listens.
+        <strong>Still local-only.</strong> While an agent is auditing, Scorly connects to
+        <code id="infoAddr">ws://127.0.0.1:47615</code>, on this computer, where only Scorly's agent tool listens. The agent opens that bridge only for audits and closes it after 10 idle minutes.
         For each audit it opens the URL in a background tab, runs the same analysis as the popup and closes the tab.
         With the switch off, agents can still use Scorly, but audits run in a separate headless Chrome without your logins.
       </div>
@@ -174,7 +175,7 @@
   <details class="ag-card ag-fold-card">
     <summary>Troubleshooting</summary>
     <ul class="ag-list">
-      <li><strong>Stuck on "Waiting for an agent":</strong> no agent session with Scorly is running. Start one; Scorly checks every 30 seconds, or press <em>Retry now</em>.</li>
+      <li><strong>Always "On · idle":</strong> that's normal between audits. An agent opens its bridge only while auditing and closes it after 10 idle minutes; <em>Stop</em> closes it straight away. Scorly checks for it every 30 seconds, or press <em>Retry now</em>.</li>
       <li><strong>"SCORLY NOT INSTALLED" or setup not detected:</strong> in a terminal, <code>npx -y github:dazecoop/scorly status</code> lists each agent app, whether Scorly is installed there and whether it starts. Detection on this page also needs the switch on and an agent session running.</li>
       <li><strong>Audits run headless even though the switch is on:</strong> check that the port matches <code>SCORLY_PORT</code> in your agent config, and that <em>Only allow localhost URLs</em> isn't blocking the URL.</li>
       <li><strong>Headless fails to start:</strong> install Google Chrome, or set <code>SCORLY_CHROME</code> to a Chrome/Chromium binary.</li>
@@ -184,6 +185,7 @@
 </main>
 
 <script src="../compare/page-chrome.js"></script>
+<script src="../popup/agent-names.js"></script>
 <script src="agent.js"></script>
 </body>
 </html>

@@ -77,7 +77,10 @@ ones listed under *Network requests* below.
   you are signed in to. If you don't want that, leave the switch off (audits
   then run in a separate headless browser with no logins), or tick **Only
   allow localhost URLs**.
-- While the switch is on, the extension retries the connection every 30
+- The agent's tool opens its end of that connection only while it is
+  auditing, and closes it after 10 idle minutes. The **Stop** button in the
+  popup closes it immediately.
+- While the switch is on, the extension looks for that connection every 30
   seconds, and stores the connection status and the URL of the last audit in
   local extension storage so the settings page can show it. Turning the
   switch off closes the connection and removes that status record.

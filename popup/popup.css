@@ -54,12 +54,28 @@ html, body { height: 600px; }
 }
 .icon-btn:hover { background: var(--accent-soft); color: var(--accent); }
 .icon-btn svg { width: 16px; height: 16px; }
-/* AI-agent bridge status: no dot when off, pulsing amber while waiting for
-   an agent, accent while connected. */
+/* AI-agent bridge status: no dot when off, grey while on but idle (agents
+   open the bridge only to audit), accent while an agent is connected. */
 .agent-btn { position: relative; }
 .agent-dot { position: absolute; top: 5px; right: 5px; width: 7px; height: 7px; border-radius: 50%; border: 1.5px solid var(--surface); display: none; }
-.agent-btn[data-state="waiting"] .agent-dot { display: block; background: var(--warn); }
+.agent-btn[data-state="waiting"] .agent-dot { display: block; background: var(--text-muted); }
 .agent-btn[data-state="connected"] .agent-dot { display: block; background: var(--accent); }
+
+.agent-strip {
+  display: flex; align-items: center; gap: 8px; padding: 6px 12px;
+  background: var(--accent-soft); border-bottom: 1px solid var(--accent);
+  font-size: 11.5px; color: var(--text);
+}
+.agent-strip-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); flex-shrink: 0; }
+.agent-strip[data-busy="true"] .agent-strip-dot { animation: agent-pulse 0.9s ease-in-out infinite; }
+.agent-strip-text { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.agent-stop-btn {
+  font: inherit; font-weight: 700; font-size: 11px; padding: 3px 9px; border-radius: 6px; cursor: pointer;
+  color: var(--fail); background: var(--surface); border: 1px solid var(--border);
+}
+.agent-stop-btn:hover { border-color: var(--fail); }
+@keyframes agent-pulse { 50% { opacity: 0.3; } }
+@media (prefers-reduced-motion: reduce) { .agent-strip-dot { animation: none !important; } }
 .hidden { display: none !important; }
 
 .state-pane {

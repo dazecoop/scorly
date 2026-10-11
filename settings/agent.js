@@ -16,14 +16,6 @@ const DEFAULT_AUDIT_URL = 'http://localhost:3000';
 // whether the MCP server is set up in an agent.
 const CLI_CLIENT = 'scorly-cli';
 
-// MCP clientInfo names → what the user calls the app.
-const CLIENT_NAMES = [
-  [/^claude-code$/i, 'Claude Code'],
-  [/^claude-ai$|claude desktop/i, 'Claude Desktop'],
-  [/cursor/i, 'Cursor'],
-  [/visual studio code|vscode|copilot/i, 'VS Code'],
-];
-
 const $ = (id) => document.getElementById(id);
 let settings = { ...DEFAULTS };
 let status = { state: 'off', agents: [] };
@@ -31,10 +23,7 @@ let seen = {};
 let client = 'all';
 let lastDetected = null;
 
-function prettyClient(name) {
-  const hit = CLIENT_NAMES.find(([re]) => re.test(name));
-  return hit ? hit[1] : name;
-}
+const prettyClient = scorlyAgentAppName; // popup/agent-names.js
 
 function relTime(iso) {
   const s = Math.round((Date.now() - Date.parse(iso)) / 1000);
@@ -61,8 +50,8 @@ function renderStatus() {
     $('statusTitle').textContent = 'Off';
     $('statusSub').textContent = 'Turn on to let agents audit pages in this browser and to detect your setup.';
   } else if (state === 'waiting') {
-    $('statusTitle').textContent = 'On · waiting for an agent';
-    $('statusSub').textContent = 'Start a session in your agent. Scorly connects within 30 seconds.';
+    $('statusTitle').textContent = 'On · idle';
+    $('statusSub').textContent = 'Nothing runs until an agent audits a page. Its bridge then opens, Scorly connects within 30 seconds, and the bridge closes again after 10 idle minutes.';
   } else if (state === 'busy') {
     $('statusTitle').textContent = 'Auditing…';
     $('statusSub').textContent = status.busy;
@@ -71,6 +60,8 @@ function renderStatus() {
     $('statusSub').textContent = agents.length ? `In use by ${agents.join(', ')}` : 'Linked to Scorly\'s agent tool';
   }
   $('reconnectBtn').classList.toggle('hidden', state !== 'waiting');
+  $('stopBtn').classList.toggle('hidden', state !== 'connected' && state !== 'busy');
+  if (state === 'waiting' || state === 'off') $('stopBtn').disabled = false;
 
   const last = status.lastAudit;
   const lastEl = $('lastAudit');
@@ -287,6 +278,10 @@ async function init() {
     else e.target.value = settings.port;
   });
   $('reconnectBtn').addEventListener('click', reconnect);
+  $('stopBtn').addEventListener('click', () => {
+    $('stopBtn').disabled = true;
+    try { agentPageApi.runtime.sendMessage({ type: 'scorly-agent-stop' }).catch(() => {}); } catch (e) { /* ignore */ }
+  });
 
   try { client = localStorage.getItem('scorly-agent-client') || client; } catch (err) { /* ignore */ }
   if (!['all', 'vscode', 'cli'].includes(client)) client = 'all'; // saved from the old per-app tabs

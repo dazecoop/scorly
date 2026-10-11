@@ -9,7 +9,7 @@
 
 const readline = require('readline');
 const { Bridge, DEFAULT_PORT } = require('./bridge');
-const { runAudit, ENGINE_LABEL } = require('./run');
+const { runAudit, bridgeStatus, ENGINE_LABEL } = require('./run');
 const engine = require('./engine');
 
 const VERSION = require('../package.json').version;
@@ -107,7 +107,7 @@ async function callTool(name, args = {}) {
   }
 
   if (name === 'scorly_status') {
-    const s = await bridge.status().catch(() => ({ extension: null, agents: [] }));
+    const s = await bridgeStatus(bridge);
     // First line is fixed so the settings page's "Test it" step can tell the
     // user exactly what a working setup replies.
     const lines = [`Scorly MCP is working (v${VERSION}).`];
@@ -115,7 +115,8 @@ async function callTool(name, args = {}) {
       ? `Audits run in the user's browser via the Scorly extension (v${s.extension.version || '?'}, ${s.extension.browser || 'browser'})` +
         (s.extension.localhostOnly ? ' — restricted to localhost URLs; other URLs fall back to headless Chrome.' : '.')
       : 'The Scorly extension is not connected — audits run in headless Chrome. (The user can turn on "Let AI agents use Scorly" in the extension.)');
-    lines.push(`Bridge: ws://127.0.0.1:${s.port || DEFAULT_PORT} (${s.mode === 'hub' ? 'hosted by this session' : s.mode === 'peer' ? 'shared with another session' : 'not running'})`);
+    lines.push(`Bridge: ws://127.0.0.1:${s.port || DEFAULT_PORT} (${s.mode === 'hub' ? 'hosted by this session' : s.mode === 'peer' ? 'shared with another session' : 'not running'}` +
+      `${s.mode !== 'none' ? '; opens on demand and closes after 10 idle minutes' : ''})`);
     if (audits.size) {
       lines.push('', 'Audits this session:');
       for (const a of audits.values()) lines.push(`- \`${a.id}\` ${a.url} — ${engine.scoreAudit(a).overallScore}/100 (${a.capturedAt})`);
@@ -132,8 +133,9 @@ async function handle(msg) {
     case 'initialize': {
       const client = (params && params.clientInfo && params.clientInfo.name) || 'mcp-client';
       if (!bridge) {
+        // Not opened here: the bridge opens on the first audit that needs the
+        // browser and closes itself after 10 idle minutes.
         bridge = new Bridge({ port: Number(process.env.SCORLY_PORT) || DEFAULT_PORT, client });
-        bridge.start().catch((err) => log('bridge unavailable:', err.message));
       }
       const requested = params && params.protocolVersion;
       return {

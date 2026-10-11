@@ -74,7 +74,6 @@ async function main() {
     const url = args._[1];
     if (!url) throw new Error('Usage: scorly audit <url>');
     const bridge = makeBridge();
-    if (args.via !== 'headless') await bridge.start().catch(() => {});
     const log = (m) => console.error(m + (args.via ? '' : ' (pass --via headless to skip)'));
     try {
       const { audit, engine: used, note } = await runAudit(url, { bridge, via: args.via || 'auto', log });
@@ -115,7 +114,7 @@ async function main() {
     console.log('');
     const bridge = makeBridge();
     try {
-      await bridge.start();
+      await bridge.use();
       // A bridge this command just opened only hears from the extension on
       // its next retry, so give it one retry interval.
       if (bridge.mode === 'hub') await bridge.waitForExtension(Number(args.wait) || 35000);

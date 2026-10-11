@@ -399,14 +399,28 @@ function initAgentButton() {
   el('agentBtn').addEventListener('click', open);
   el('aboutAgentRow').addEventListener('click', open);
 
-  const LABEL = { off: 'off', waiting: 'on, waiting for an agent', connected: 'connected' };
+  el('agentStopBtn').addEventListener('click', () => {
+    el('agentStopBtn').disabled = true;
+    browserApi.runtime.sendMessage({ type: 'scorly-agent-stop' }).catch(() => {});
+  });
+
+  const LABEL = { off: 'off', waiting: 'on, idle until an agent audits', connected: 'connected' };
   const paint = (settings, status) => {
     const state = !(settings && settings.enabled) ? 'off' : (status && status.state === 'connected' ? 'connected' : 'waiting');
     el('agentBtn').dataset.state = state;
     el('agentBtn').title = 'AI agents (MCP / CLI): ' + LABEL[state];
-    if (state === 'connected' && status.agents && status.agents.length) {
-      el('aboutAgentSub').textContent = 'Connected: ' + status.agents.join(', ');
-    }
+
+    // The strip exists only while an agent's bridge is open, with a way to
+    // close it there and then.
+    const strip = el('agentStrip');
+    strip.classList.toggle('hidden', state !== 'connected');
+    if (state !== 'connected') { el('agentStopBtn').disabled = false; return; }
+    const apps = Array.from(new Set((status.agents || []).map(scorlyAgentAppName)));
+    strip.dataset.busy = String(!!status.busy);
+    el('agentStripText').textContent = status.busy
+      ? 'Agent auditing ' + status.busy
+      : 'Agent bridge open' + (apps.length ? ' · ' + apps.join(', ') : '');
+    if (apps.length) el('aboutAgentSub').textContent = 'Connected: ' + apps.join(', ');
   };
   browserApi.storage.local.get(['scorly-agent-settings', 'scorly-agent-status']).then((s) => {
     paint(s['scorly-agent-settings'], s['scorly-agent-status']);

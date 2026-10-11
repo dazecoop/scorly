@@ -20,7 +20,7 @@
 // Messages are JSON:
 //   extension → hub   {type:'hello', role:'extension', version, browser, localhostOnly}
 //   agent → hub       {type:'hello', role:'agent', client}
-//   hub → extension   {type:'agents', clients} · {type:'audit', id, url} · {type:'ping'}
+//   hub → extension   {type:'agents', clients} · {type:'audit', id, url, client} · {type:'ping'}
 //   extension → hub   {type:'result', id, data, origin} · {type:'error', id, message} · {type:'pong'}
 //                     {type:'shutdown'} (the user pressed Stop) · {type:'goodbye'} (switch turned off)
 //   agent ⇄ hub       {type:'audit', id, url} → {type:'result'|'error', id, …}
@@ -172,7 +172,7 @@ class Bridge {
     } else if (msg.type === 'status') {
       this.send(ws, { type: 'status', id: msg.id, ...this.localStatus() });
     } else if (msg.type === 'audit') {
-      this.auditViaExtension(msg.url, { peer: true })
+      this.auditViaExtension(msg.url, { peer: true, client: this.agents.get(ws) })
         .then((r) => this.send(ws, { type: 'result', id: msg.id, ...r }))
         .catch((err) => this.send(ws, { type: 'error', id: msg.id, message: err.message }));
     }
@@ -282,13 +282,15 @@ class Bridge {
   }
 
   // Resolves { data, origin } with the raw analyzer result from the browser.
-  async auditViaExtension(url, { peer = false } = {}) {
+  // `client` names the app the audit is for, so the extension can show who
+  // last used it.
+  async auditViaExtension(url, { peer = false, client = this.client } = {}) {
     if (this.mode === 'peer') {
       const r = await this.request(this.upstream, { type: 'audit', url });
       return { data: r.data, origin: r.origin };
     }
     if (!this.extension) throw new Error('The Scorly extension is not connected.');
-    const r = await this.request(this.extension.ws, { type: 'audit', url }, { peer });
+    const r = await this.request(this.extension.ws, { type: 'audit', url, client }, { peer });
     return { data: r.data, origin: r.origin };
   }
 

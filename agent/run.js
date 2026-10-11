@@ -17,8 +17,14 @@ const ENGINE_LABEL = {
   headless: 'headless Chrome',
 };
 
+// Progress hooks, so a terminal can show what's happening (the MCP server
+// passes none). Each returns a function that's called once the step ends:
+//   waiting(ms)          waiting up to `ms` for the extension → done(connected)
+//   auditing(url, where) one audit running ('browser' | 'headless') → done(ok)
+const NO_PROGRESS = { waiting: () => () => {}, auditing: () => () => {} };
+
 // via: 'auto' | 'browser' | 'headless'
-async function runAudit(url, { bridge, via = 'auto', log = () => {} } = {}) {
+async function runAudit(url, { bridge, via = 'auto', log = () => {}, progress = NO_PROGRESS } = {}) {
   if (!/^https?:\/\//i.test(url)) throw new Error(`Only http(s) URLs can be audited (got "${url}").`);
   let note = null;
 
@@ -29,15 +35,19 @@ async function runAudit(url, { bridge, via = 'auto', log = () => {} } = {}) {
     try { await bridge.use(); } catch (e) { log('Scorly bridge unavailable: ' + e.message); }
     let connected = await bridge.extensionConnected();
     if (!connected && (via === 'browser' || extensionRecentlySeen())) {
-      log('Waiting for the Scorly extension to connect…');
+      const waited = progress.waiting(FIRST_CONNECT_WAIT_MS);
       connected = await bridge.waitForExtension(FIRST_CONNECT_WAIT_MS);
+      waited(connected);
     }
     if (connected) {
+      const done = progress.auditing(url, 'browser');
       try {
         const { data, origin } = await bridge.auditViaExtension(url);
+        done(true);
         bridge.touch();
         return { audit: engine.makeAudit(data, origin || 'background'), engine: 'browser', note };
       } catch (err) {
+        done(false);
         if (via === 'browser') throw err;
         note = `Extension audit failed (${err.message}); fell back to headless Chrome.`;
       }
@@ -46,7 +56,15 @@ async function runAudit(url, { bridge, via = 'auto', log = () => {} } = {}) {
     }
   }
 
-  const data = await engine.captureHeadless(url);
+  const done = progress.auditing(url, 'headless');
+  let data;
+  try {
+    data = await engine.captureHeadless(url);
+  } catch (err) {
+    done(false);
+    throw err;
+  }
+  done(true);
   return { audit: engine.makeAudit(data, 'headless'), engine: 'headless', note };
 }
 

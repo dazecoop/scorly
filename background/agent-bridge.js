@@ -127,9 +127,12 @@ function agentDisconnect() {
 
 async function agentRunAudit(msg) {
   const url = String(msg.url || '');
+  const client = String(msg.client || '').slice(0, 60) || null;
+  // Every audit request counts as the app having used Scorly just now.
+  if (client) agentRememberSeen([client]);
   const fail = (message) => {
     agentSend({ type: 'error', id: msg.id, message });
-    return agentSetStatus({ lastAudit: { url, at: new Date().toISOString(), ok: false, message } });
+    return agentSetStatus({ lastAudit: { url, client, at: new Date().toISOString(), ok: false, message } });
   };
   if (!/^https?:\/\//i.test(url) || scorlyIsRestrictedUrl(url)) return fail('Scorly can only audit http(s) pages.');
   if (agentSettings.localhostOnly && !agentIsLocalhost(url)) {
@@ -139,7 +142,7 @@ async function agentRunAudit(msg) {
   try {
     const data = await scorlyAnalyzeUrlInBackgroundTab(url);
     agentSend({ type: 'result', id: msg.id, data, origin: 'background' });
-    await agentSetStatus({ busy: null, lastAudit: { url, at: new Date().toISOString(), ok: true } });
+    await agentSetStatus({ busy: null, lastAudit: { url, client, at: new Date().toISOString(), ok: true } });
   } catch (err) {
     await agentSetStatus({ busy: null });
     await fail(err && err.message ? err.message : 'Audit failed.');

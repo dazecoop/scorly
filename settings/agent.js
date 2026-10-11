@@ -63,16 +63,39 @@ function renderStatus() {
   $('stopBtn').classList.toggle('hidden', state !== 'connected' && state !== 'busy');
   if (state === 'waiting' || state === 'off') $('stopBtn').disabled = false;
 
-  const last = status.lastAudit;
-  const lastEl = $('lastAudit');
-  lastEl.classList.toggle('hidden', !last || !settings.enabled);
-  if (last) {
-    lastEl.textContent = '';
-    const tag = document.createElement('span');
-    tag.className = last.ok ? 'ok' : 'bad';
-    tag.textContent = last.ok ? 'Last audit' : 'Last audit failed';
-    lastEl.append(tag, ` · ${last.url} · ${relTime(last.at)}` + (last.ok ? '' : ` · ${last.message || ''}`));
+  renderLastUsed();
+}
+
+// "Last used": the latest moment an agent app (or the CLI) reached this
+// browser, from the apps-seen record and the last audit. Kept after the
+// switch is turned off. Headless runs with the switch off never reach the
+// extension, so they can't show here.
+function renderLastUsed() {
+  const el = $('lastAudit');
+  const audit = status.lastAudit;
+  const seenAt = Object.entries(seen).sort((a, b) => Date.parse(b[1]) - Date.parse(a[1]))[0];
+  const auditAt = audit ? Date.parse(audit.at) : NaN;
+  const latest = seenAt && !(Date.parse(seenAt[1]) <= auditAt) ? { at: seenAt[1], client: seenAt[0] } : null;
+  const show = audit && (!latest || auditAt >= Date.parse(latest.at))
+    ? { at: audit.at, client: audit.client, audit }
+    : latest;
+  el.classList.toggle('hidden', !show);
+  if (!show) return;
+
+  el.textContent = '';
+  el.title = new Date(show.at).toLocaleString();
+  const tag = document.createElement('span');
+  tag.className = show.audit && !show.audit.ok ? 'bad' : 'ok';
+  tag.textContent = 'Last used ' + relTime(show.at);
+  const who = show.client ? prettyClient(show.client) : null;
+  let rest = '';
+  if (show.audit) {
+    rest = ` · ${who ? who + ' ' : ''}${show.audit.ok ? 'audited' : 'failed to audit'} ${show.audit.url}` +
+      (show.audit.ok ? '' : ` (${show.audit.message || 'error'})`);
+  } else if (who) {
+    rest = ` · by ${who}`;
   }
+  el.append(tag, rest);
 }
 
 // ---- Setup detection -------------------------------------------------------

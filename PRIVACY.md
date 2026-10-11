@@ -100,7 +100,7 @@ settings, audits can run in your own browser instead:
   **Only allow localhost URLs**.
 - The extension stores, in local extension storage: your agent settings;
   while the switch is on, the connection status and the URL of the last
-  audit (removed when you turn the switch off); and the names of agent apps
+  audit with the app that asked for it (removed when you turn the switch off); and the names of agent apps
   that have connected (for example "claude-code") with when they last did,
   so the settings page can tell you setup is done. All of it is removed when
   you uninstall Scorly.

@@ -231,9 +231,10 @@ async function main() {
     check('summary lists issues/warnings', /## (Issues|Warnings)/.test(md));
     s = await waitFor(async () => {
       const t = await settings.$eval('#lastAudit', (el) => el.textContent);
-      return t.includes('Last audit') && t;
-    }, 5000, 'last audit line');
-    check('settings shows the last audit', s.includes(url), s);
+      return t.includes('Last used') && t.includes(url) && t;
+    }, 5000, 'last used line');
+    check('settings shows when Scorly was last used, by which app, for which page',
+      /Last used just now · test-agent audited/.test(s) && s.includes(url), s);
 
     console.log('\n[5] headless audit of the same page scores the same way');
     const r2 = await runAudit(url, { via: 'headless' });
@@ -297,6 +298,8 @@ async function main() {
     s = await statusText(settings);
     check('extension disconnected and shows Off', s.state === 'off', s.state);
     check('setup stays detected after switching off', s.detected, JSON.stringify(s));
+    const lastUsedOff = await settings.$eval('#lastAudit', (el) => !el.classList.contains('hidden') && el.textContent);
+    check('"Last used" still shown with the switch off', /^Last used/.test(lastUsedOff || ''), lastUsedOff);
     console.log('\n[9] an unused bridge closes itself');
     const idle = new Bridge({ port: PORT + 1, client: 'idle-test', idleMs: 1200 });
     await idle.use();

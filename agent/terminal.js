@@ -253,4 +253,68 @@ function renderMarkdown(md) {
   return out.join('\n') + '\n';
 }
 
-module.exports = { useColor, renderSummary, renderDelta, renderCompare, renderMarkdown };
+// ---- Live progress (stderr) -------------------------------------------------
+
+const SPIN = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+
+// Redraws one line in place until ended; returns end(finalLine(elapsedMs)).
+function liveLine(stream, render) {
+  const start = Date.now();
+  let frame = 0;
+  const draw = () => stream.write('\r' + render(SPIN[frame++ % SPIN.length], Date.now() - start) + `${ESC}K`);
+  stream.write(`${ESC}?25l`); // hide the cursor while the line animates
+  draw();
+  const timer = setInterval(draw, 80);
+  return (finalLine) => {
+    clearInterval(timer);
+    const line = finalLine(Date.now() - start);
+    stream.write('\r' + `${ESC}K` + (line ? line + '\n' : '') + `${ESC}?25h`);
+  };
+}
+
+const secs = (ms) => (ms / 1000).toFixed(1) + 's';
+
+// Progress hooks for runAudit (see run.js). In a colour terminal: a spinner,
+// a bar that fills over the wait with a countdown, then a result line.
+// Otherwise one plain line per step, so logs and pipes stay readable.
+function terminalProgress(stream = process.stderr) {
+  if (!stream.isTTY || !useColor(stream)) {
+    return {
+      waiting(ms) {
+        stream.write(`Waiting up to ${Math.round(ms / 1000)}s for the Scorly extension to connect (pass --via headless to skip)…\n`);
+        return (ok) => stream.write(ok ? 'Connected to the Scorly extension.\n' : 'The extension didn\'t connect; using headless Chrome.\n');
+      },
+      auditing(url, where) {
+        stream.write(`Auditing ${url} ${where === 'browser' ? 'in your browser' : 'in headless Chrome'}…\n`);
+        return () => {};
+      },
+    };
+  }
+  // Process exit mid-animation must not leave the cursor hidden.
+  process.once('exit', () => stream.write(`${ESC}?25h`));
+  const wide = (process.stderr.columns || 80) >= 100;
+  return {
+    waiting(ms) {
+      const end = liveLine(stream, (spin, elapsed) => {
+        const width = 22;
+        const filled = Math.min(width, Math.round((elapsed / ms) * width));
+        const left = String(Math.max(0, Math.ceil((ms - elapsed) / 1000))).padStart(2);
+        return `  ${c.blue(spin)} Waiting for the Scorly extension  ${c.blue('━'.repeat(filled))}${c.gray('━'.repeat(width - filled))}  ${c.bold(left + 's')}` +
+          (wide ? c.gray('   --via headless skips this') : '');
+      });
+      return (connected) => end((elapsed) => (connected
+        ? `  ${c.green('✔')} Connected to the Scorly extension ${c.gray('(' + secs(elapsed) + ')')}`
+        : `  ${c.gray('·')} The extension didn't connect, so this runs in headless Chrome` +
+          (wide ? c.gray('  (turn on "Let AI agents use Scorly" to use your browser)') : '')));
+    },
+    auditing(url, where) {
+      const label = where === 'browser' ? 'in your browser' : 'in headless Chrome';
+      const end = liveLine(stream, (spin, elapsed) => `  ${c.blue(spin)} Auditing ${c.bold(url)} ${label}  ${c.gray(secs(elapsed))}`);
+      return (ok) => end((elapsed) => (ok
+        ? `  ${c.green('✔')} Audited ${label} ${c.gray('(' + secs(elapsed) + ')')}`
+        : `  ${c.red('✘')} Audit ${label} failed`));
+    },
+  };
+}
+
+module.exports = { useColor, renderSummary, renderDelta, renderCompare, renderMarkdown, terminalProgress };

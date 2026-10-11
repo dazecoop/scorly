@@ -77,9 +77,10 @@ async function main() {
     const url = args._[1];
     if (!url) throw new Error('Usage: scorly audit <url>');
     const bridge = makeBridge();
-    const log = (m) => console.error(m + (args.via ? '' : ' (pass --via headless to skip)'));
+    const log = (m) => console.error(m);
     try {
-      const { audit, engine: used, note } = await runAudit(url, { bridge, via: args.via || 'auto', log });
+      const progress = term.terminalProgress(process.stderr);
+      const { audit, engine: used, note } = await runAudit(url, { bridge, via: args.via || 'auto', log, progress });
       const detail = args.detail || 'summary';
       const pretty = !args.markdown && term.useColor();
       if (detail === 'json') console.log(JSON.stringify(engine.jsonReport(audit), null, 2));
@@ -130,7 +131,11 @@ async function main() {
       await bridge.use();
       // A bridge this command just opened only hears from the extension on
       // its next retry, so give it one retry interval.
-      if (bridge.mode === 'hub') await bridge.waitForExtension(Number(args.wait) || 35000);
+      if (bridge.mode === 'hub' && !(await bridge.extensionConnected())) {
+        const ms = Number(args.wait) || 35000;
+        const waited = term.terminalProgress(process.stderr).waiting(ms);
+        waited(await bridge.waitForExtension(ms));
+      }
       const s = await bridge.status();
       if (s.extension) {
         console.log(`Extension connected: Scorly ${s.extension.version || ''} in ${s.extension.browser || 'your browser'}` +

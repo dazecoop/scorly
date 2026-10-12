@@ -4,6 +4,8 @@
 ![Manifest](https://img.shields.io/badge/manifest-v3-10b981)
 ![Licence](https://img.shields.io/badge/licence-MIT-2F7DD1)
 
+<a href="https://chrome.google.com/webstore/detail/kkeiigabedjkjpmegfppoanfeglkgcfh"><img alt="Available in the Chrome Web Store" src="docs/chrome-web-store-badge.png" width="248" height="70" /></a>
+
 A free, open source browser extension that scores any page's on-page SEO in
 depth, shows how it will look when shared on social platforms, and diffs the
 version you're building against the one that's already live.
@@ -237,7 +239,14 @@ toggle.
 
 ## Install
 
-### Chrome / Edge / Brave
+### Chrome Web Store
+
+<a href="https://chrome.google.com/webstore/detail/kkeiigabedjkjpmegfppoanfeglkgcfh"><img alt="Available in the Chrome Web Store" src="docs/chrome-web-store-badge.png" width="248" height="70" /></a>
+
+[Add Scorly to Chrome](https://chrome.google.com/webstore/detail/kkeiigabedjkjpmegfppoanfeglkgcfh)
+— one click, and it works in Edge and Brave too.
+
+### Chrome / Edge / Brave, from source
 
 1. Go to `chrome://extensions`.
 2. Enable **Developer mode** (top right).

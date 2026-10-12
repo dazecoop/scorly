@@ -168,6 +168,29 @@ h3 {
   color: var(--muted);
 }
 
+.store {
+  margin: 22px 0 8px;
+  text-align: center;
+}
+
+.store a {
+  display: inline-block;
+  border-radius: 10px;
+  background: #ffffff;
+  border: 1px solid var(--border);
+  padding: 6px 14px;
+  line-height: 0;
+  transition: border-color 0.15s ease;
+}
+
+.store a:hover { border-color: var(--accent); }
+
+.store img {
+  display: block;
+  width: 248px;
+  height: auto;
+}
+
 .note {
   background: var(--surface);
   border: 1px solid var(--border);

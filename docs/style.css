@@ -169,16 +169,19 @@ h3 {
 }
 
 .store {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 12px;
   margin: 22px 0 8px;
-  text-align: center;
 }
 
 .store a {
-  display: inline-block;
+  display: block;
   border-radius: 10px;
   background: #ffffff;
   border: 1px solid var(--border);
-  padding: 6px 14px;
+  padding: 4px 10px;
   line-height: 0;
   transition: border-color 0.15s ease;
 }
@@ -188,6 +191,7 @@ h3 {
 .store img {
   display: block;
   width: 248px;
+  max-width: 100%;
   height: auto;
 }
 

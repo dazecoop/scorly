@@ -5,6 +5,7 @@
 ![Licence](https://img.shields.io/badge/licence-MIT-2F7DD1)
 
 <a href="https://chrome.google.com/webstore/detail/kkeiigabedjkjpmegfppoanfeglkgcfh"><img alt="Available in the Chrome Web Store" src="docs/chrome-web-store-badge.png" width="248" height="70" /></a>
+<a href="https://addons.mozilla.org/addon/scorly-seo-score-og-preview/"><img alt="Get the add-on for Firefox" src="docs/firefox-add-ons-badge.png" width="248" height="70" /></a>
 
 A free, open source browser extension that scores any page's on-page SEO in
 depth, shows how it will look when shared on social platforms, and diffs the
@@ -239,12 +240,13 @@ toggle.
 
 ## Install
 
-### Chrome Web Store
+### From a store
 
 <a href="https://chrome.google.com/webstore/detail/kkeiigabedjkjpmegfppoanfeglkgcfh"><img alt="Available in the Chrome Web Store" src="docs/chrome-web-store-badge.png" width="248" height="70" /></a>
+<a href="https://addons.mozilla.org/addon/scorly-seo-score-og-preview/"><img alt="Get the add-on for Firefox" src="docs/firefox-add-ons-badge.png" width="248" height="70" /></a>
 
-[Add Scorly to Chrome](https://chrome.google.com/webstore/detail/kkeiigabedjkjpmegfppoanfeglkgcfh)
-— one click, and it works in Edge and Brave too.
+- **Chrome, Edge, Brave** — [Chrome Web Store](https://chrome.google.com/webstore/detail/kkeiigabedjkjpmegfppoanfeglkgcfh)
+- **Firefox** — [Firefox Add-ons](https://addons.mozilla.org/addon/scorly-seo-score-og-preview/)
 
 ### Chrome / Edge / Brave, from source
 
@@ -253,15 +255,15 @@ toggle.
 3. Click **Load unpacked** and select this folder (or `dist/chrome` after
    running `npm run build:chrome`).
 
-### Firefox
+### Firefox, from source
 
 1. Go to `about:debugging#/runtime/this-firefox`.
 2. Click **Load Temporary Add-on…** and select `manifest.json` in this
    folder (or `dist/firefox` after running `npm run build:firefox`).
 
-   Temporary add-ons are removed when Firefox closes — for a permanent
-   install it needs to be signed via addons.mozilla.org, or loaded with
-   `xpinstall.signatures.required=false` set in a Developer/Nightly build.
+   Temporary add-ons are removed when Firefox closes. For a permanent
+   install, use the signed build on
+   [Firefox Add-ons](https://addons.mozilla.org/addon/scorly-seo-score-og-preview/).
 
 ## How it works
 

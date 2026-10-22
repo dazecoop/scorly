@@ -5,7 +5,7 @@
 ![Licence](https://img.shields.io/badge/licence-MIT-2F7DD1)
 
 <a href="https://chrome.google.com/webstore/detail/kkeiigabedjkjpmegfppoanfeglkgcfh"><img alt="Available in the Chrome Web Store" src="docs/chrome-web-store-badge.png" width="248" height="70" /></a>
-<a href="https://addons.mozilla.org/addon/scorly-seo-score-og-preview/"><img alt="Get the add-on for Firefox" src="docs/firefox-add-ons-badge.png" width="248" height="70" /></a>
+<a href="https://addons.mozilla.org/addon/scorly/"><img alt="Get the add-on for Firefox" src="docs/firefox-add-ons-badge.png" width="248" height="70" /></a>
 
 A free, open source browser extension that scores any page's on-page SEO in
 depth, shows how it will look when shared on social platforms, and diffs the
